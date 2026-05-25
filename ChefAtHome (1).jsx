@@ -4,8 +4,8 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, 
 // ─── Supabase Client ──────────────────────────────────────────────────────────
 // Replace these with your actual Supabase project values from https://app.supabase.com
 // Settings → API → Project URL and anon/public key
-const SUPABASE_URL = "https://fhvwafasykldkuaqrelz.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_YQEb39B1Xxp5qdSYX5ZeAw_cxPQlyyJ";
+const SUPABASE_URL = "https://YOUR_PROJECT_ID.supabase.co";
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
 
 // Minimal Supabase JS client (no npm required — works in browser/React)
 const supabaseClient = (() => {
@@ -319,25 +319,7 @@ const css = `
   .pulse { animation: pulse 1.5s ease-in-out infinite; }
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
   .modal { background: white; border-radius: 20px; padding: 36px; width: 440px; max-width: 95vw; position: relative; animation: fadeUp 0.3s ease; max-height: 90vh; overflow-y: auto; }
-  @media (max-width: 768px) { 
-    .hide-mobile { display: none !important; }
-    .show-mobile { display: flex !important; }
-    .mobile-stack { flex-direction: column !important; }
-    .mobile-full { width: 100% !important; }
-    .mobile-padding { padding: 16px !important; }
-    .mobile-text-sm { font-size: 14px !important; }
-    .grid-mobile-1 { grid-template-columns: 1fr !important; }
-    .hero-grid { grid-template-columns: 1fr !important; padding: 40px 20px !important; min-height: auto !important; }
-    .modal { width: 95vw !important; padding: 24px !important; }
-    .booking-grid { grid-template-columns: 1fr !important; }
-    .chef-profile-grid { grid-template-columns: 1fr !important; }
-    .pricing-grid { grid-template-columns: 1fr !important; }
-    .stats-grid { grid-template-columns: 1fr 1fr !important; }
-    .features-grid { grid-template-columns: 1fr 1fr !important; }
-  }
-  @media (min-width: 769px) {
-    .show-mobile { display: none !important; }
-  }
+  @media (max-width: 768px) { .hide-mobile { display: none !important; } }
   .ai-bubble { background: linear-gradient(135deg, #1e293b, #0f172a); border-radius: 16px; padding: 20px; color: white; border: 1px solid rgba(232,116,59,0.3); }
   .typing-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: ${COLORS.primary}; margin: 0 2px; animation: pulse 1s ease-in-out infinite; }
   .typing-dot:nth-child(2) { animation-delay: 0.2s; }
@@ -416,7 +398,8 @@ Respond ONLY with a JSON object, no preamble, no markdown, exactly this structur
   "packageType": "All Inclusive" or "Cook-at-Home",
   "courses": ["Course 1", "Course 2", "Course 3", "Course 4"],
   "chefTip": "one sentence tip from the chef",
-  "ambiance": "brief ambiance description"
+  "ambiance": "brief ambiance description",
+  "bestChef": "Chef Sampath Perera" or "Chef Tharindu Silva" or "Chef Danushka Fernando" or "Chef Nimesh Bandara" or "Chef Priya Wickramasinghe" or "Chef Kasun Rathnayake"
 }`
           }]
         })
@@ -426,7 +409,7 @@ Respond ONLY with a JSON object, no preamble, no markdown, exactly this structur
       const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
       setResult(parsed);
     } catch (e) {
-      setResult({ menuName: "Sri Lankan Feast", chefType: "Premium Chef", estimatedPrice: "LKR 45,000", packageType: "All Inclusive", courses: ["Pol Roti with Seeni Sambol", "Fresh Lagoon Prawns Curry", "Lamb Biryani with Raita", "Watalappan Dessert"], chefTip: "Book at least 48 hours in advance for freshest ingredients.", ambiance: "Candlelit home dining with elegant table setup" });
+      setResult({ menuName: "Sri Lankan Feast", chefType: "Premium Chef", estimatedPrice: "LKR 45,000", packageType: "All Inclusive", courses: ["Pol Roti with Seeni Sambol", "Fresh Lagoon Prawns Curry", "Lamb Biryani with Raita", "Watalappan Dessert"], chefTip: "Book at least 48 hours in advance for freshest ingredients.", ambiance: "Candlelit home dining with elegant table setup", bestChef: "Chef Sampath Perera" });
     }
     setLoading(false);
   };
@@ -504,7 +487,7 @@ Respond ONLY with a JSON object, no preamble, no markdown, exactly this structur
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
-                <span style={{ color: COLORS.gold }}>✨ {result.chefType}</span> · {result.packageType}
+                Recommended: <strong style={{ color: "white" }}>{result.bestChef}</strong> · <span style={{ color: COLORS.gold }}>{result.chefType}</span>
               </div>
               <button className="btn-primary" style={{ padding: "8px 18px", fontSize: 13 }}>Book Now →</button>
             </div>
@@ -518,68 +501,36 @@ Respond ONLY with a JSON object, no preamble, no markdown, exactly this structur
 // ─── Navbar ─────────────────────────────────────────────────────────────────
 
 function Navbar({ page, setPage, user, setUser, setShowAuth }) {
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const SUPER_ADMIN_EMAIL = "judethayaan@gmail.com";
-  const isAdmin = user?.email === SUPER_ADMIN_EMAIL || user?.role === "admin";
-  const isChef = user?.role === "chef";
-
   return (
     <nav style={{ background: COLORS.darkNav, position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 20px rgba(0,0,0,0.2)" }}>
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60 }}>
-        {/* Logo */}
-        <div onClick={() => { setPage("home"); setMobileOpen(false); }} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 64 }}>
+        <div onClick={() => setPage("home")} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 22, color: COLORS.primary }}>🍽️</span>
           <span style={{ fontFamily: FONTS.heading, fontWeight: 700, fontSize: 20, color: "white" }}>Chef<span style={{ color: COLORS.primary }}>at</span>Home</span>
         </div>
-
-        {/* Desktop nav */}
-        <div className="hide-mobile" style={{ display: "flex", alignItems: "center", gap: 24 }}>
+        <div className="hide-mobile" style={{ display: "flex", alignItems: "center", gap: 28 }}>
           {[["home","Home"],["chefs","Chefs"],["experiences","Experiences"],["pricing","Pricing"],["ai-menu","✨ AI Menu"]].map(([p, label]) => (
             <span key={p} className="nav-link" onClick={() => setPage(p)} style={{ color: page === p ? COLORS.primary : undefined }}>{label}</span>
           ))}
           <span className="nav-link" onClick={() => setPage("about")}>About</span>
         </div>
-
-        {/* Right side */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {user ? (
-            <>
-              <button className="btn-primary" style={{ fontSize: 13, padding: "7px 14px" }} onClick={() => setPage(isAdmin ? "admin" : isChef ? "chef-panel" : "dashboard")}>
-                {isAdmin ? "⚙️ Admin" : isChef ? "👨‍🍳 Panel" : "📋 Dashboard"}
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button className="btn-primary" style={{ fontSize: 13, padding: "8px 16px" }} onClick={() => setPage(user.role === "admin" ? "admin" : user.role === "chef" ? "chef-panel" : "dashboard")}>
+                {user.role === "admin" ? "Admin Panel" : user.role === "chef" ? "My Panel" : "Dashboard"}
               </button>
-              <div className="hide-mobile" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Avatar initials={user.name?.split(" ").map(n => n[0]).join("").slice(0,2) || "U"} size={34} />
-                <button onClick={() => setUser(null)} style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)", padding: "6px 10px", borderRadius: 6, fontSize: 12, border: "none" }}>Logout</button>
-              </div>
-            </>
+              <Avatar initials={user.name.split(" ").map(n => n[0]).join("").slice(0,2)} size={36} />
+              <button onClick={() => setUser(null)} style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)", padding: "6px 12px", borderRadius: 6, fontSize: 13, border: "none" }}>Logout</button>
+            </div>
           ) : (
-            <button className="btn-primary" style={{ padding: "8px 16px", fontSize: 13 }} onClick={() => setShowAuth("login")}>Log In</button>
+            <>
+              <button className="btn-ghost" style={{ padding: "8px 16px", fontSize: 13 }} onClick={() => setShowAuth("login")}>Log In</button>
+              <button className="btn-primary" style={{ padding: "8px 16px", fontSize: 13 }} onClick={() => setShowAuth("signup")}>Sign Up</button>
+            </>
           )}
-          {/* Mobile hamburger */}
-          <button className="show-mobile" onClick={() => setMobileOpen(o => !o)} style={{ background: "rgba(255,255,255,0.1)", border: "none", color: "white", padding: "8px 10px", borderRadius: 6, fontSize: 18 }}>
-            {mobileOpen ? "✕" : "☰"}
-          </button>
         </div>
       </div>
-
-      {/* Mobile dropdown menu */}
-      {mobileOpen && (
-        <div style={{ background: "#1a2332", borderTop: "1px solid rgba(255,255,255,0.08)", padding: "12px 20px 20px" }}>
-          {[["home","🏠 Home"],["chefs","👨‍🍳 Chefs"],["experiences","🍽️ Experiences"],["pricing","💰 Pricing"],["ai-menu","✨ AI Menu"],["about","ℹ️ About"]].map(([p, label]) => (
-            <div key={p} onClick={() => { setPage(p); setMobileOpen(false); }} style={{ padding: "12px 0", color: page === p ? COLORS.primary : "rgba(255,255,255,0.8)", fontSize: 15, fontWeight: 500, borderBottom: "1px solid rgba(255,255,255,0.05)", cursor: "pointer" }}>
-              {label}
-            </div>
-          ))}
-          {user && (
-            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-              <button className="btn-primary" style={{ flex: 1, padding: "10px" }} onClick={() => { setPage(isAdmin ? "admin" : isChef ? "chef-panel" : "dashboard"); setMobileOpen(false); }}>
-                {isAdmin ? "⚙️ Admin Panel" : isChef ? "👨‍🍳 My Panel" : "📋 Dashboard"}
-              </button>
-              <button onClick={() => { setUser(null); setMobileOpen(false); }} style={{ background: "rgba(255,255,255,0.1)", color: "white", padding: "10px 16px", borderRadius: 8, border: "none", fontSize: 13 }}>Logout</button>
-            </div>
-          )}
-        </div>
-      )}
     </nav>
   );
 }
@@ -590,23 +541,23 @@ function HeroSection({ setPage }) {
   return (
     <section style={{ background: `linear-gradient(135deg, ${COLORS.dark} 0%, #2D1810 50%, #3D1F0D 100%)`, minHeight: "88vh", display: "flex", alignItems: "center", position: "relative", overflow: "hidden" }}>
       <div style={{ position: "absolute", inset: 0, backgroundImage: "radial-gradient(circle at 70% 50%, rgba(232,116,59,0.15) 0%, transparent 60%)" }} />
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "60px 20px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 40, alignItems: "center" }} className="hero-grid">
+      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "80px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 60, alignItems: "center" }}>
         <div className="fade-up">
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(232,116,59,0.2)", border: "1px solid rgba(232,116,59,0.4)", borderRadius: 20, padding: "6px 14px", marginBottom: 20 }}>
-            <span style={{ color: COLORS.primary, fontSize: 12, fontWeight: 600, letterSpacing: 1 }}>✦ PREMIUM PRIVATE DINING · SRI LANKA</span>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(232,116,59,0.2)", border: "1px solid rgba(232,116,59,0.4)", borderRadius: 20, padding: "6px 14px", marginBottom: 24 }}>
+            <span style={{ color: COLORS.primary, fontSize: 12, fontWeight: 600, letterSpacing: 1 }}>✦ PREMIUM PRIVATE DINING</span>
           </div>
-          <h1 style={{ fontFamily: FONTS.heading, fontSize: "clamp(28px,5vw,54px)", fontWeight: 700, color: "white", lineHeight: 1.15, marginBottom: 16 }}>
-            Book a Private Chef for <em style={{ color: COLORS.primary, fontStyle: "italic" }}>Unforgettable</em> Home Dining
+          <h1 style={{ fontFamily: FONTS.heading, fontSize: "clamp(36px,5vw,58px)", fontWeight: 700, color: "white", lineHeight: 1.15, marginBottom: 20 }}>
+            Book a Private Chef for <em style={{ color: COLORS.primary, fontStyle: "italic" }}>Unforgettable</em> Dining Experiences at Home
           </h1>
-          <p style={{ color: "rgba(255,255,255,0.65)", fontSize: 16, lineHeight: 1.7, marginBottom: 28, maxWidth: 480 }}>
-            Restaurant-quality meals at home, prepared by verified professional chefs across Sri Lanka.
+          <p style={{ color: "rgba(255,255,255,0.65)", fontSize: 17, lineHeight: 1.7, marginBottom: 36, maxWidth: 480 }}>
+            Enjoy restaurant-quality meals, personalized for you, prepared by verified professional chefs in the comfort of your home.
           </p>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 32 }}>
-            <button className="btn-primary" style={{ padding: "13px 26px", fontSize: 15 }} onClick={() => setPage("chefs")}>Book a Chef →</button>
-            <button className="btn-ghost" style={{ padding: "13px 26px", fontSize: 15 }} onClick={() => setPage("ai-menu")}>✨ AI Menu Planner</button>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 40 }}>
+            <button className="btn-primary" style={{ padding: "14px 30px", fontSize: 15 }} onClick={() => setPage("chefs")}>Book Now</button>
+            <button className="btn-ghost" style={{ padding: "14px 30px", fontSize: 15 }} onClick={() => setPage("ai-menu")}>✨ AI Menu Planner</button>
           </div>
-          <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-            {[["✓ Verified Chefs","Background-checked"],["🛡️ Hygienic","Certified standards"],["⭐ 4.8/5","1,000+ reviews"]].map(([title, sub]) => (
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+            {[["✓ Verified Chefs","Background-checked"],["🛡️ Hygienic & Safe","Certified standards"],["⭐ 4.8/5 Rating","Customer satisfaction"]].map(([title, sub]) => (
               <div key={title}>
                 <div style={{ color: "white", fontSize: 13, fontWeight: 600 }}>{title}</div>
                 <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 12 }}>{sub}</div>
@@ -616,20 +567,20 @@ function HeroSection({ setPage }) {
         </div>
         <div className="hide-mobile" style={{ display: "flex", justifyContent: "center" }}>
           <div style={{ position: "relative" }}>
-            <div style={{ width: 380, height: 440, borderRadius: 24, background: "linear-gradient(135deg, #3D2010, #5C3020)", border: "1px solid rgba(232,116,59,0.3)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 20, padding: 36 }}>
-              <div style={{ fontSize: 72 }}>👨‍🍳</div>
+            <div style={{ width: 420, height: 480, borderRadius: 24, background: "linear-gradient(135deg, #3D2010, #5C3020)", border: "1px solid rgba(232,116,59,0.3)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 20, padding: 40 }}>
+              <div style={{ fontSize: 80 }}>👨‍🍳</div>
               <div style={{ textAlign: "center" }}>
-                <div style={{ fontFamily: FONTS.heading, fontSize: 20, color: "white", marginBottom: 6 }}>Premium Private Chef</div>
-                <div style={{ color: COLORS.primary, fontSize: 14, marginBottom: 14 }}>⭐ 4.9 · Verified · 8+ Years</div>
+                <div style={{ fontFamily: FONTS.heading, fontSize: 22, color: "white", marginBottom: 8 }}>Chef Sampath Perera</div>
+                <div style={{ color: COLORS.primary, fontSize: 14, marginBottom: 16 }}>⭐ 4.9 · 120 Reviews · 8+ Years</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
                   {["Sri Lankan", "Seafood", "Italian"].map(s => (
                     <span key={s} style={{ background: "rgba(232,116,59,0.2)", color: COLORS.primary, padding: "4px 10px", borderRadius: 20, fontSize: 12, border: "1px solid rgba(232,116,59,0.3)" }}>{s}</span>
                   ))}
                 </div>
               </div>
-              <button className="btn-primary" style={{ width: "100%", padding: "12px" }} onClick={() => setPage("chefs")}>Browse Chefs</button>
+              <button className="btn-primary" style={{ width: "100%", padding: "12px" }} onClick={() => setPage("chefs")}>Book This Chef</button>
             </div>
-            <div style={{ position: "absolute", top: -16, right: -16, background: COLORS.primary, borderRadius: 12, padding: "10px 14px", color: "white", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(232,116,59,0.4)" }}>🎉 Just booked!</div>
+            <div style={{ position: "absolute", top: -20, right: -20, background: COLORS.primary, borderRadius: 12, padding: "10px 16px", color: "white", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(232,116,59,0.4)" }}>🎉 Just booked!</div>
           </div>
         </div>
       </div>
@@ -832,7 +783,7 @@ function ChefProfile({ chef, setPage, setBookingChef }) {
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto", padding: "48px 24px" }}>
       <button onClick={() => setPage("chefs")} style={{ background: "none", border: "none", color: COLORS.textMuted, fontSize: 14, marginBottom: 24, cursor: "pointer" }}>← Back to Chefs</button>
-      <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 32 }} className="chef-profile-grid">
+      <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 32 }}>
         <div>
           <div style={{ background: "white", borderRadius: 16, border: `1px solid ${COLORS.border}`, overflow: "hidden", position: "sticky", top: 80 }}>
             <div style={{ background: `linear-gradient(135deg, ${COLORS.dark}, #2D1810)`, padding: "36px 24px", textAlign: "center" }}>
@@ -1002,7 +953,7 @@ function BookingPage({ chef, setPage, user, setShowAuth }) {
           </div>
         ))}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 28 }} className="booking-grid">
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 28 }}>
         <div>
           {step === 1 && (
             <div className="fade-up">
@@ -1043,52 +994,33 @@ function BookingPage({ chef, setPage, user, setShowAuth }) {
           {step === 3 && (
             <div className="fade-up">
               <h2 style={{ fontFamily: FONTS.heading, fontSize: 26, marginBottom: 24 }}>Payment</h2>
-              {/* PayHere Banner */}
-              <div style={{ background: "#1A3C6E", borderRadius: 14, padding: "16px 20px", marginBottom: 20, display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{ fontSize: 32 }}>🔵</div>
-                <div>
-                  <div style={{ color: "white", fontWeight: 700, fontSize: 16 }}>PayHere — Sri Lanka's #1 Payment Gateway</div>
-                  <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 13 }}>Visa, Mastercard, Amex · eZ Cash · mCash · Bank Transfer · Koko</div>
-                </div>
-              </div>
               <div style={{ marginBottom: 20 }}>
                 <label className="label">Select Payment Method</label>
-                {[
-                  ["payhere_card","💳","Credit / Debit Card","Visa, Mastercard, Amex — via PayHere"],
-                  ["payhere_ez","📱","eZ Cash / mCash","Dialog & Mobitel mobile payments"],
-                  ["payhere_koko","🟡","Koko (Buy Now Pay Later)","Pay in 3 interest-free instalments"],
-                  ["payhere_bank","🏦","Bank Transfer","Direct bank transfer via PayHere"],
-                ].map(([id,icon,label,sub]) => (
-                  <div key={id} onClick={() => setPayMethod(id)} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", border: `2px solid ${payMethod===id?COLORS.primary:COLORS.border}`, borderRadius: 12, marginBottom: 10, cursor: "pointer", background: payMethod===id?COLORS.primaryLight:"white", transition: "all 0.2s" }}>
-                    <span style={{ fontSize: 24 }}>{icon}</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>{label}</div>
-                      <div style={{ fontSize: 12, color: COLORS.textMuted }}>{sub}</div>
-                    </div>
-                    <div style={{ width: 20, height: 20, borderRadius: "50%", border: `2px solid ${payMethod===id?COLORS.primary:COLORS.border}`, background: payMethod===id?COLORS.primary:"white", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      {payMethod===id && <div style={{ width: 8, height: 8, borderRadius: "50%", background: "white" }} />}
-                    </div>
+                {[["card","💳","Credit / Debit Card"],["koko","🟡","Koko (Buy Now Pay Later)"],["pickme","🟠","PickMe Pay"],["bank","🏦","Bank Transfer"]].map(([id,icon,label]) => (
+                  <div key={id} onClick={() => setPayMethod(id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", border: `1.5px solid ${payMethod===id?COLORS.primary:COLORS.border}`, borderRadius: 10, marginBottom: 10, cursor: "pointer", background: payMethod===id?COLORS.primaryLight:"white", transition: "all 0.2s" }}>
+                    <span style={{ fontSize: 20 }}>{icon}</span>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>{label}</span>
+                    {payMethod===id && <span style={{ marginLeft: "auto", color: COLORS.primary, fontWeight: 700 }}>✓</span>}
                   </div>
                 ))}
               </div>
-              {(payMethod === "payhere_card") && (
-                <div style={{ background: COLORS.surface, borderRadius: 12, padding: 20, border: `1px solid ${COLORS.border}`, marginBottom: 16 }}>
-                  <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 12 }}>Card details are entered securely on PayHere's payment page after you click confirm. Your card info is never stored on our servers.</div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {["💳 VISA","💳 Mastercard","💳 Amex"].map(c => <span key={c} style={{ padding: "4px 10px", background: "white", borderRadius: 6, border: `1px solid ${COLORS.border}`, fontSize: 12 }}>{c}</span>)}
+              {payMethod === "card" && (
+                <div style={{ display: "grid", gap: 14 }}>
+                  <div><label className="label">Card Number</label><input className="input" placeholder="1234 5678 9012 3456" /></div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                    <div><label className="label">Expiry</label><input className="input" placeholder="MM/YY" /></div>
+                    <div><label className="label">CVV</label><input className="input" placeholder="123" /></div>
                   </div>
                 </div>
               )}
-              <div style={{ padding: "14px 16px", background: COLORS.infoLight, borderRadius: 10, fontSize: 13, color: COLORS.info, marginBottom: 16 }}>
-                🔒 Payments are processed securely by <strong>PayHere</strong> · PCI DSS Compliant · 256-bit SSL
-              </div>
+              <div style={{ marginTop: 16, padding: 14, background: COLORS.infoLight, borderRadius: 10, fontSize: 13, color: COLORS.info }}>🔒 Your payment is secured with 256-bit SSL encryption. 10% is held for 48 hours after service completion.</div>
             </div>
           )}
           <div style={{ marginTop: 28 }}>
             {step < 3 ? (
               <button className="btn-primary" style={{ padding: "14px 36px", fontSize: 15, width: "100%" }} onClick={() => setStep(s => s+1)}>Continue →</button>
             ) : (
-              <button className="btn-primary" style={{ padding: "14px 36px", fontSize: 15, width: "100%", background: "#1A3C6E" }} onClick={() => setDone(true)}>🔵 Pay LKR {total.toLocaleString()} via PayHere →</button>
+              <button className="btn-primary" style={{ padding: "14px 36px", fontSize: 15, width: "100%" }} onClick={() => setDone(true)}>Pay LKR {total.toLocaleString()} →</button>
             )}
           </div>
         </div>
@@ -1261,159 +1193,24 @@ function CustomerDashboard({ user }) {
 // ─── Chef Panel ───────────────────────────────────────────────────────────────
 
 function ChefPanel({ user }) {
-  const [tab, setTab] = useState("join");
+  const [tab, setTab] = useState("overview");
   const [availability, setAvailability] = useState({ mon: true, tue: true, wed: false, thu: true, fri: true, sat: true, sun: false });
-  const [joinForm, setJoinForm] = useState({ fullName: "", nic: "", phone: "", email: "", address: "", city: "", experience: "", specialties: "", bio: "" });
-  const [joinFiles, setJoinFiles] = useState({ policePdf: null, nicFront: null, nicBack: null, photo: null, foodCert: null });
-  const [joinSubmitted, setJoinSubmitted] = useState(false);
-  const [bookingFilter, setBookingFilter] = useState("All");
-  const [chefBookings, setChefBookings] = useState(bookings.map(b => ({ ...b, chefStatus: "pending" })));
-  const [calMonth, setCalMonth] = useState(new Date(2026, 4, 1));
-  const [blockedDates, setBlockedDates] = useState([]);
-
-  const handleFileChange = (field, e) => {
-    const file = e.target.files[0];
-    if (file) setJoinFiles(f => ({ ...f, [field]: file }));
-  };
-
-  const toggleBookingStatus = (id, status) => {
-    setChefBookings(prev => prev.map(b => b.id === id ? { ...b, chefStatus: status } : b));
-  };
-
-  const getDaysInMonth = (date) => new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-  const getFirstDay = (date) => new Date(date.getFullYear(), date.getMonth(), 1).getDay();
-  const formatDate = (y, m, d) => `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-  const toggleDate = (dateStr) => setBlockedDates(prev => prev.includes(dateStr) ? prev.filter(d => d !== dateStr) : [...prev, dateStr]);
-  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-
-  const filteredBookings = bookingFilter === "All" ? chefBookings : chefBookings.filter(b =>
-    bookingFilter === "Pending" ? b.chefStatus === "pending" :
-    bookingFilter === "Confirmed" ? b.chefStatus === "confirmed" :
-    b.chefStatus === "completed"
-  );
 
   return (
     <div style={{ display: "flex", minHeight: "calc(100vh - 64px)" }}>
       <div style={{ width: 220, background: "#0F172A", padding: "24px 12px", flexShrink: 0 }}>
         <div style={{ padding: "0 8px 20px", borderBottom: "1px solid rgba(255,255,255,0.1)", marginBottom: 16 }}>
-          <Avatar initials={user?.name?.split(" ").map(n=>n[0]).join("") || "CH"} size={44} color="#B45309" />
-          <div style={{ color: "white", fontWeight: 600, fontSize: 14, marginTop: 10 }}>{user?.name || "Chef"}</div>
-          <span className="badge-premium" style={{ marginTop: 6, display: "inline-block" }}>Chef Account</span>
+          <Avatar initials="SP" size={44} color="#B45309" />
+          <div style={{ color: "white", fontWeight: 600, fontSize: 14, marginTop: 10 }}>Chef Sampath</div>
+          <span className="badge-premium" style={{ marginTop: 6, display: "inline-block" }}>Premium Chef</span>
         </div>
-        {[["join","📋","Join Request"],["overview","📊","Dashboard"],["orders","📅","My Bookings"],["availability","📅","Availability Calendar"],["earnings","💰","Earnings"],["menu","🍽️","My Menus"],["profile","👤","My Profile"]].map(([id,icon,label]) => (
+        {[["overview","📊","Dashboard"],["orders","📋","My Bookings"],["availability","📅","Availability"],["earnings","💰","Earnings"],["menu","🍽️","My Menus"],["profile","👤","My Profile"]].map(([id,icon,label]) => (
           <div key={id} className={`sidebar-link ${tab===id?"active":""}`} onClick={() => setTab(id)}>
-            <span>{icon}</span><span style={{ fontSize: 13 }}>{label}</span>
+            <span>{icon}</span><span>{label}</span>
           </div>
         ))}
       </div>
-
       <div style={{ flex: 1, padding: 32, background: COLORS.surface, overflowY: "auto" }}>
-
-        {/* ── JOIN REQUEST TAB ── */}
-        {tab === "join" && (
-          <div style={{ maxWidth: 800 }}>
-            {joinSubmitted ? (
-              <div style={{ textAlign: "center", padding: "60px 24px" }}>
-                <div style={{ fontSize: 64, marginBottom: 20 }}>⏳</div>
-                <h2 style={{ fontFamily: FONTS.heading, fontSize: 30, marginBottom: 12 }}>Application Submitted!</h2>
-                <p style={{ color: COLORS.textMuted, fontSize: 16, marginBottom: 24 }}>Your chef application is under review. Our admin team will verify your documents and contact you within 2–3 business days.</p>
-                <div style={{ background: COLORS.warningLight, borderRadius: 12, padding: 20, display: "inline-block", textAlign: "left", minWidth: 320 }}>
-                  <div style={{ fontWeight: 700, color: COLORS.warning, marginBottom: 12 }}>📋 Application Status</div>
-                  {[["Full Name", joinForm.fullName],["NIC", joinForm.nic],["Phone", joinForm.phone],["Email", joinForm.email]].map(([k,v]) => (
-                    <div key={k} style={{ display: "flex", gap: 12, marginBottom: 8, fontSize: 14 }}>
-                      <span style={{ color: COLORS.textMuted, minWidth: 80 }}>{k}:</span>
-                      <span style={{ fontWeight: 600 }}>{v}</span>
-                    </div>
-                  ))}
-                  <div style={{ marginTop: 12, padding: "8px 14px", background: COLORS.warning + "22", borderRadius: 8, fontSize: 13, color: COLORS.warning, fontWeight: 600 }}>
-                    🕐 Status: Pending Admin Review
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div style={{ marginBottom: 28 }}>
-                  <h2 style={{ fontFamily: FONTS.heading, fontSize: 28, marginBottom: 8 }}>Chef Application Form</h2>
-                  <p style={{ color: COLORS.textMuted }}>Fill in all details to apply as a verified ChefAtHome chef. Our team will review your documents manually.</p>
-                </div>
-
-                {/* Personal Details */}
-                <div style={{ background: "white", borderRadius: 16, border: `1px solid ${COLORS.border}`, padding: 28, marginBottom: 20 }}>
-                  <h3 style={{ fontFamily: FONTS.heading, fontSize: 18, marginBottom: 20, color: COLORS.primary }}>👤 Personal Information</h3>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                    <div><label className="label">Full Name <span style={{color:"red"}}>*</span></label><input className="input" placeholder="As on NIC" value={joinForm.fullName} onChange={e => setJoinForm(f=>({...f, fullName: e.target.value}))} /></div>
-                    <div><label className="label">NIC Number <span style={{color:"red"}}>*</span></label><input className="input" placeholder="e.g. 199012345678" value={joinForm.nic} onChange={e => setJoinForm(f=>({...f, nic: e.target.value}))} /></div>
-                    <div><label className="label">Phone Number <span style={{color:"red"}}>*</span></label><input className="input" placeholder="+94 77 123 4567" value={joinForm.phone} onChange={e => setJoinForm(f=>({...f, phone: e.target.value}))} /></div>
-                    <div><label className="label">Email Address <span style={{color:"red"}}>*</span></label><input className="input" type="email" placeholder="your@email.com" value={joinForm.email} onChange={e => setJoinForm(f=>({...f, email: e.target.value}))} /></div>
-                    <div style={{ gridColumn: "span 2" }}><label className="label">Currently Living Address <span style={{color:"red"}}>*</span></label><textarea className="input" rows={2} placeholder="Full address including city, district..." value={joinForm.address} onChange={e => setJoinForm(f=>({...f, address: e.target.value}))} style={{resize:"none"}} /></div>
-                    <div><label className="label">City</label><select className="input" value={joinForm.city} onChange={e => setJoinForm(f=>({...f, city: e.target.value}))}>
-                      <option value="">Select city...</option>
-                      {["Colombo","Kandy","Galle","Negombo","Jaffna","Matara","Kurunegala","Anuradhapura","Trincomalee","Batticaloa"].map(c => <option key={c}>{c}</option>)}
-                    </select></div>
-                    <div><label className="label">Years of Experience <span style={{color:"red"}}>*</span></label><select className="input" value={joinForm.experience} onChange={e => setJoinForm(f=>({...f, experience: e.target.value}))}>
-                      <option value="">Select...</option>
-                      {["1-2 Years","3-5 Years","5-8 Years","8-10 Years","10+ Years"].map(e => <option key={e}>{e}</option>)}
-                    </select></div>
-                  </div>
-                  <div style={{ marginTop: 16 }}><label className="label">Cuisine Specialties</label><input className="input" placeholder="e.g. Sri Lankan, Seafood, Italian, BBQ..." value={joinForm.specialties} onChange={e => setJoinForm(f=>({...f, specialties: e.target.value}))} /></div>
-                  <div style={{ marginTop: 16 }}><label className="label">Professional Bio</label><textarea className="input" rows={3} placeholder="Tell us about your cooking background, previous experience, hotel/restaurant history..." value={joinForm.bio} onChange={e => setJoinForm(f=>({...f, bio: e.target.value}))} style={{resize:"none"}} /></div>
-                </div>
-
-                {/* Document Uploads */}
-                <div style={{ background: "white", borderRadius: 16, border: `1px solid ${COLORS.border}`, padding: 28, marginBottom: 20 }}>
-                  <h3 style={{ fontFamily: FONTS.heading, fontSize: 18, marginBottom: 8, color: COLORS.primary }}>📄 Required Documents</h3>
-                  <p style={{ color: COLORS.textMuted, fontSize: 13, marginBottom: 20 }}>All documents are securely stored and only accessed by our admin team for verification.</p>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                    {[
-                      ["policePdf", "🚔 Police Clearance Report", "PDF only", ".pdf"],
-                      ["nicFront", "🪪 NIC — Front Side", "JPG, PNG, PDF", ".jpg,.jpeg,.png,.pdf"],
-                      ["nicBack", "🪪 NIC — Back Side", "JPG, PNG, PDF", ".jpg,.jpeg,.png,.pdf"],
-                      ["photo", "📸 Your Professional Photo", "JPG, PNG", ".jpg,.jpeg,.png"],
-                      ["foodCert", "🍽️ Food Safety Certificate (if any)", "PDF, JPG, PNG (optional)", ".pdf,.jpg,.jpeg,.png"],
-                    ].map(([field, label, hint, accept]) => (
-                      <div key={field} style={{ border: `2px dashed ${joinFiles[field] ? COLORS.success : COLORS.border}`, borderRadius: 12, padding: 18, background: joinFiles[field] ? COLORS.successLight : "#FAFAF9" }}>
-                        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{label}</div>
-                        <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 12 }}>{hint}</div>
-                        {joinFiles[field] ? (
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span style={{ fontSize: 13, color: COLORS.success, fontWeight: 600 }}>✅ {joinFiles[field].name}</span>
-                            <button onClick={() => setJoinFiles(f=>({...f,[field]:null}))} style={{ background: "none", border: "none", color: COLORS.danger, cursor: "pointer", fontSize: 13 }}>✕</button>
-                          </div>
-                        ) : (
-                          <label style={{ cursor: "pointer" }}>
-                            <input type="file" accept={accept} style={{ display: "none" }} onChange={e => handleFileChange(field, e)} />
-                            <span style={{ background: COLORS.primary, color: "white", padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>Choose File</span>
-                          </label>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Declaration */}
-                <div style={{ background: COLORS.infoLight, borderRadius: 12, padding: 18, marginBottom: 20, fontSize: 13, color: COLORS.info }}>
-                  🔒 By submitting this application, you confirm that all information provided is accurate and true. False information may result in permanent account suspension.
-                </div>
-
-                <button className="btn-primary" style={{ width: "100%", padding: "16px", fontSize: 16 }} onClick={() => {
-                  if (!joinForm.fullName || !joinForm.nic || !joinForm.phone || !joinForm.email || !joinForm.address || !joinForm.experience) {
-                    alert("Please fill in all required fields marked with *");
-                    return;
-                  }
-                  if (!joinFiles.policePdf || !joinFiles.nicFront || !joinFiles.nicBack || !joinFiles.photo) {
-                    alert("Please upload Police Clearance, NIC (front & back), and your photo.");
-                    return;
-                  }
-                  setJoinSubmitted(true);
-                }}>
-                  Submit Chef Application →
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ── OVERVIEW TAB ── */}
         {tab === "overview" && (
           <div>
             <h2 style={{ fontFamily: FONTS.heading, fontSize: 26, marginBottom: 4 }}>Chef Dashboard</h2>
@@ -1424,124 +1221,74 @@ function ChefPanel({ user }) {
               <MetricCard label="Pending Orders" value="3" sub="Needs confirmation" color={COLORS.warning} />
               <MetricCard label="Rating" value="4.9 ⭐" sub="120 reviews" color={COLORS.gold} />
             </div>
-            <h3 style={{ fontFamily: FONTS.heading, fontSize: 20, marginBottom: 16 }}>Incoming Booking Requests</h3>
-            {chefBookings.filter(b => b.chefStatus === "pending").map(b => (
-              <div key={b.id} style={{ background: "white", borderRadius: 12, border: `2px solid ${COLORS.warning}44`, padding: 20, marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ fontFamily: FONTS.heading, fontSize: 20, marginBottom: 16 }}>Upcoming Bookings</h3>
+            {bookings.slice(0, 3).map(b => (
+              <div key={b.id} style={{ background: "white", borderRadius: 12, border: `1px solid ${COLORS.border}`, padding: 20, marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>{b.experience}</div>
                   <div style={{ fontSize: 13, color: COLORS.textMuted }}>{b.date} · {b.guests} Guests · {b.location}</div>
-                  <div style={{ fontSize: 13, color: COLORS.textMuted }}>Customer: {b.customer}</div>
                 </div>
                 <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-                  <div style={{ fontWeight: 700, color: COLORS.primary, fontSize: 16 }}>LKR {b.amount.toLocaleString()}</div>
+                  <div style={{ fontWeight: 700, color: COLORS.primary }}>LKR {b.amount.toLocaleString()}</div>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => toggleBookingStatus(b.id, "confirmed")} style={{ background: COLORS.successLight, color: COLORS.success, padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer" }}>✓ Accept</button>
-                    <button onClick={() => toggleBookingStatus(b.id, "declined")} style={{ background: COLORS.dangerLight, color: COLORS.danger, padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer" }}>✗ Decline</button>
+                    <button style={{ background: COLORS.successLight, color: COLORS.success, padding: "6px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600, border: "none" }}>Accept</button>
+                    <button style={{ background: COLORS.dangerLight, color: COLORS.danger, padding: "6px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600, border: "none" }}>Decline</button>
                   </div>
                 </div>
               </div>
             ))}
-            {chefBookings.filter(b => b.chefStatus === "pending").length === 0 && (
-              <div style={{ textAlign: "center", padding: "40px", color: COLORS.textMuted, background: "white", borderRadius: 12, border: `1px solid ${COLORS.border}` }}>
-                No pending requests right now 🎉
-              </div>
-            )}
           </div>
         )}
-
-        {/* ── BOOKINGS TAB ── */}
         {tab === "orders" && (
           <div>
             <h2 style={{ fontFamily: FONTS.heading, fontSize: 24, marginBottom: 24 }}>My Bookings</h2>
             <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-              {["All","Pending","Confirmed","Completed"].map(f => (
-                <button key={f} className={`tab ${bookingFilter===f?"active":""}`} onClick={() => setBookingFilter(f)}>{f}</button>
-              ))}
+              {["All","Confirmed","Pending","Completed"].map(f => <button key={f} className={`tab ${f==="All"?"active":""}`}>{f}</button>)}
             </div>
-            {filteredBookings.length === 0 && (
-              <div style={{ textAlign: "center", padding: 40, color: COLORS.textMuted }}>No bookings found</div>
-            )}
-            {filteredBookings.map(b => (
+            {bookings.map(b => (
               <div key={b.id} style={{ background: "white", borderRadius: 12, border: `1px solid ${COLORS.border}`, padding: 24, marginBottom: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                   <div style={{ fontWeight: 700, fontSize: 16 }}>{b.experience}</div>
-                  <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-                    background: b.chefStatus==="confirmed" ? COLORS.successLight : b.chefStatus==="pending" ? COLORS.warningLight : b.chefStatus==="declined" ? COLORS.dangerLight : COLORS.infoLight,
-                    color: b.chefStatus==="confirmed" ? COLORS.success : b.chefStatus==="pending" ? COLORS.warning : b.chefStatus==="declined" ? COLORS.danger : COLORS.info
-                  }}>{b.chefStatus.charAt(0).toUpperCase()+b.chefStatus.slice(1)}</span>
+                  <StatusBadge status={b.status} />
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16, marginBottom: b.chefStatus==="pending"?16:0 }}>
-                  {[["Customer",b.customer],["Date",b.date],["Guests",b.guests+" pax"],["Amount",`LKR ${b.amount.toLocaleString()}`]].map(([k,v]) => (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
+                  {[["Customer",b.customer],["Date",b.date],["Guests",b.guests],["Amount",`LKR ${b.amount.toLocaleString()}`]].map(([k,v]) => (
                     <div key={k}><div style={{ fontSize: 12, color: COLORS.textMuted }}>{k}</div><div style={{ fontWeight: 600, fontSize: 14 }}>{v}</div></div>
                   ))}
                 </div>
-                {b.chefStatus === "pending" && (
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => toggleBookingStatus(b.id, "confirmed")} style={{ background: COLORS.successLight, color: COLORS.success, padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer" }}>✓ Accept Booking</button>
-                    <button onClick={() => toggleBookingStatus(b.id, "declined")} style={{ background: COLORS.dangerLight, color: COLORS.danger, padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer" }}>✗ Decline</button>
-                  </div>
-                )}
               </div>
             ))}
           </div>
         )}
-
-        {/* ── AVAILABILITY CALENDAR TAB ── */}
         {tab === "availability" && (
           <div>
-            <h2 style={{ fontFamily: FONTS.heading, fontSize: 24, marginBottom: 8 }}>Availability Calendar</h2>
-            <p style={{ color: COLORS.textMuted, marginBottom: 28 }}>Click on dates to block them. Blocked dates won't be available for booking.</p>
-
-            {/* Weekly toggle */}
-            <div style={{ background: "white", borderRadius: 16, border: `1px solid ${COLORS.border}`, padding: 24, marginBottom: 24 }}>
-              <h3 style={{ fontFamily: FONTS.heading, fontSize: 17, marginBottom: 16 }}>Weekly Availability</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 10 }}>
+            <h2 style={{ fontFamily: FONTS.heading, fontSize: 24, marginBottom: 8 }}>Manage Availability</h2>
+            <p style={{ color: COLORS.textMuted, marginBottom: 28 }}>Set your availability for the week. Customers can only book on your available days.</p>
+            <div style={{ background: "white", borderRadius: 16, border: `1px solid ${COLORS.border}`, padding: 28, marginBottom: 24 }}>
+              <h3 style={{ fontFamily: FONTS.heading, fontSize: 18, marginBottom: 20 }}>Weekly Schedule</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 12 }}>
                 {Object.entries(availability).map(([day, on]) => (
-                  <div key={day} onClick={() => setAvailability(a => ({...a, [day]: !a[day]}))} style={{ textAlign: "center", padding: "14px 6px", borderRadius: 10, border: `2px solid ${on ? COLORS.primary : COLORS.border}`, background: on ? COLORS.primaryLight : "white", cursor: "pointer", transition: "all 0.2s" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: on ? COLORS.primary : COLORS.textMuted, textTransform: "uppercase" }}>{day}</div>
-                    <div style={{ fontSize: 18, marginTop: 6 }}>{on ? "✅" : "❌"}</div>
+                  <div key={day} onClick={() => setAvailability(a => ({...a, [day]: !a[day]}))} style={{ textAlign: "center", padding: "16px 8px", borderRadius: 12, border: `2px solid ${on ? COLORS.primary : COLORS.border}`, background: on ? COLORS.primaryLight : "white", cursor: "pointer", transition: "all 0.2s" }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: on ? COLORS.primary : COLORS.textMuted, textTransform: "uppercase" }}>{day}</div>
+                    <div style={{ fontSize: 20, marginTop: 8 }}>{on ? "✅" : "❌"}</div>
                   </div>
                 ))}
               </div>
             </div>
-
-            {/* Monthly calendar */}
-            <div style={{ background: "white", borderRadius: 16, border: `1px solid ${COLORS.border}`, padding: 24 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                <button onClick={() => setCalMonth(d => new Date(d.getFullYear(), d.getMonth()-1, 1))} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontWeight: 700 }}>←</button>
-                <h3 style={{ fontFamily: FONTS.heading, fontSize: 18 }}>{monthNames[calMonth.getMonth()]} {calMonth.getFullYear()}</h3>
-                <button onClick={() => setCalMonth(d => new Date(d.getFullYear(), d.getMonth()+1, 1))} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontWeight: 700 }}>→</button>
+            <div style={{ background: "white", borderRadius: 16, border: `1px solid ${COLORS.border}`, padding: 28 }}>
+              <h3 style={{ fontFamily: FONTS.heading, fontSize: 18, marginBottom: 20 }}>Working Hours</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div><label className="label">Start Time</label><input type="time" className="input" defaultValue="10:00" /></div>
+                <div><label className="label">End Time</label><input type="time" className="input" defaultValue="22:00" /></div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4, marginBottom: 8 }}>
-                {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => (
-                  <div key={d} style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: COLORS.textMuted, padding: "8px 0" }}>{d}</div>
-                ))}
+              <div style={{ marginTop: 16 }}>
+                <label className="label">Max Bookings Per Day</label>
+                <select className="input"><option>1</option><option>2</option><option>3</option></select>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4 }}>
-                {Array.from({ length: getFirstDay(calMonth) }).map((_, i) => <div key={`empty-${i}`} />)}
-                {Array.from({ length: getDaysInMonth(calMonth) }).map((_, i) => {
-                  const d = i + 1;
-                  const dateStr = formatDate(calMonth.getFullYear(), calMonth.getMonth(), d);
-                  const isBlocked = blockedDates.includes(dateStr);
-                  const isToday = new Date().toDateString() === new Date(calMonth.getFullYear(), calMonth.getMonth(), d).toDateString();
-                  return (
-                    <div key={d} onClick={() => toggleDate(dateStr)} style={{ textAlign: "center", padding: "10px 4px", borderRadius: 8, cursor: "pointer", border: `1.5px solid ${isBlocked ? COLORS.danger : isToday ? COLORS.primary : COLORS.border}`, background: isBlocked ? COLORS.dangerLight : isToday ? COLORS.primaryLight : "white", color: isBlocked ? COLORS.danger : isToday ? COLORS.primary : COLORS.text, fontWeight: isToday ? 700 : 400, fontSize: 14, transition: "all 0.15s" }}>
-                      {d}
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{ marginTop: 16, display: "flex", gap: 16, fontSize: 13 }}>
-                <span>⬜ Available</span>
-                <span style={{ color: COLORS.danger }}>🟥 Blocked ({blockedDates.length} days)</span>
-                <span style={{ color: COLORS.primary }}>🟦 Today</span>
-              </div>
-              <button className="btn-primary" style={{ marginTop: 16, padding: "10px 24px" }} onClick={() => alert("Availability saved!")}>Save Availability</button>
+              <button className="btn-primary" style={{ marginTop: 20, padding: "12px 28px" }}>Save Availability</button>
             </div>
           </div>
         )}
-
-        {/* ── EARNINGS TAB ── */}
         {tab === "earnings" && (
           <div>
             <h2 style={{ fontFamily: FONTS.heading, fontSize: 24, marginBottom: 24 }}>Earnings Overview</h2>
@@ -1564,7 +1311,7 @@ function ChefPanel({ user }) {
             </div>
             <div style={{ background: "white", borderRadius: 12, border: `1px solid ${COLORS.border}`, padding: 24 }}>
               <h3 style={{ fontFamily: FONTS.heading, fontSize: 18, marginBottom: 16 }}>Payment Breakdown</h3>
-              {[["Gross Revenue","LKR 1,050,000","text"],["Platform Commission (15%)","– LKR 157,500",COLORS.danger],["Safety Hold (5%)","– LKR 52,500",COLORS.warning],["Your Earnings (80%)","LKR 840,000",COLORS.success]].map(([k,v,color]) => (
+              {[["Gross Revenue","LKR 1,050,000","text"],["Platform Commission (10%)","– LKR 105,000",COLORS.danger],["Safety Hold (10%)","– LKR 105,000",COLORS.warning],["Your Earnings (80%)","LKR 840,000",COLORS.success]].map(([k,v,color]) => (
                 <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "12px 0", borderBottom: `1px solid ${COLORS.border}` }}>
                   <span style={{ color: COLORS.textMuted, fontSize: 14 }}>{k}</span>
                   <span style={{ fontWeight: 700, color: color === "text" ? COLORS.text : color, fontSize: 14 }}>{v}</span>
@@ -1573,8 +1320,6 @@ function ChefPanel({ user }) {
             </div>
           </div>
         )}
-
-        {/* ── MENU TAB ── */}
         {tab === "menu" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
@@ -1584,22 +1329,20 @@ function ChefPanel({ user }) {
             {chefs[0].menus.map((menu, i) => (
               <div key={menu} style={{ background: "white", borderRadius: 12, border: `1px solid ${COLORS.border}`, padding: 20, marginBottom: 12, display: "flex", alignItems: "center", gap: 16, justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 10, background: COLORS.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>{"🍛🍝🦞".split("").filter((_,idx)=>idx%2===0)[i%3]||"🍽️"}</div>
+                  <div style={{ width: 44, height: 44, borderRadius: 10, background: COLORS.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>{"🍛🦞🔥🍝🥘".split("").filter((_,idx)=>idx%2===0)[i%3]}</div>
                   <div>
                     <div style={{ fontWeight: 600, fontSize: 15 }}>{menu}</div>
                     <div style={{ fontSize: 13, color: COLORS.textMuted }}>Active · LKR 25,000–45,000</div>
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button style={{ background: COLORS.infoLight, color: COLORS.info, padding: "6px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>Edit</button>
-                  <button style={{ background: COLORS.dangerLight, color: COLORS.danger, padding: "6px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>Remove</button>
+                  <button style={{ background: COLORS.infoLight, color: COLORS.info, padding: "6px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600, border: "none" }}>Edit</button>
+                  <button style={{ background: COLORS.dangerLight, color: COLORS.danger, padding: "6px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600, border: "none" }}>Remove</button>
                 </div>
               </div>
             ))}
           </div>
         )}
-
-        {/* ── PROFILE TAB ── */}
         {tab === "profile" && (
           <div>
             <h2 style={{ fontFamily: FONTS.heading, fontSize: 24, marginBottom: 24 }}>My Profile</h2>
@@ -1607,8 +1350,8 @@ function ChefPanel({ user }) {
               <div style={{ background: "white", borderRadius: 16, border: `1px solid ${COLORS.border}`, padding: 24 }}>
                 <h3 style={{ fontFamily: FONTS.heading, fontSize: 18, marginBottom: 20 }}>Personal Information</h3>
                 <div style={{ display: "grid", gap: 16 }}>
-                  <div><label className="label">Full Name</label><input className="input" defaultValue={user?.name || "Chef"} /></div>
-                  <div><label className="label">Email</label><input className="input" defaultValue={user?.email || ""} /></div>
+                  <div><label className="label">Full Name</label><input className="input" defaultValue="Sampath Perera" /></div>
+                  <div><label className="label">Email</label><input className="input" defaultValue="sampath@chefathome.lk" /></div>
                   <div><label className="label">Phone</label><input className="input" defaultValue="+94 77 123 4567" /></div>
                   <div><label className="label">Location</label><input className="input" defaultValue="Colombo, Sri Lanka" /></div>
                 </div>
@@ -1626,63 +1369,34 @@ function ChefPanel({ user }) {
             </div>
           </div>
         )}
-
       </div>
     </div>
   );
 }
 
-
 // ─── Admin Panel ──────────────────────────────────────────────────────────────
 
 function AdminPanel() {
   const [tab, setTab] = useState("dashboard");
-  const [viewChef, setViewChef] = useState(null);
-  const [bookingFilter, setBookingFilter] = useState("All");
-  const [chefList, setChefList] = useState([
-    ...chefs.map(c => ({ ...c, adminStatus: "active", documents: { police: true, nic: true, photo: true, foodCert: true }, joinDate: "2026-01-15", phone: "+94 77 123 4567", email: c.name.toLowerCase().replace(/ /g,".")+  "@gmail.com", nic: "199012345678", address: "Colombo 7, Sri Lanka" } )),
-    { id: 101, name: "Chef Ruwan De Silva", type: "premium", location: "Kandy", experience: "5-8 Years", rating: 0, reviews: 0, price: 45000, adminStatus: "pending", menus: ["Sri Lankan Feast","BBQ Night"], specialties: "Sri Lankan, BBQ", bio: "Former hotel chef with 6 years experience.", documents: { police: true, nic: true, photo: true, foodCert: false }, joinDate: "2026-05-20", phone: "+94 71 234 5678", email: "ruwan.desilva@gmail.com", nic: "198712345678", address: "Kandy, Sri Lanka", badge: "premium", image: "RD" },
-    { id: 102, name: "Chef Nadeeka Perera", type: "local", location: "Galle", experience: "3-5 Years", rating: 0, reviews: 0, price: 22000, adminStatus: "pending", menus: ["Seafood Dinner","Italian Night"], specialties: "Seafood, Italian", bio: "Passionate home cook turned professional.", documents: { police: true, nic: true, photo: true, foodCert: true }, joinDate: "2026-05-22", phone: "+94 76 345 6789", email: "nadeeka.perera@gmail.com", nic: "199312345678", address: "Galle, Sri Lanka", badge: "local", image: "NP" },
+  const [pendingChefs, setPendingChefs] = useState([
+    { name: "Chef Ruwan De Silva", type: "premium", location: "Kandy", status: "pending" },
+    { name: "Chef Nadeeka Perera", type: "local", location: "Galle", status: "pending" },
   ]);
-
-  const pendingChefs = chefList.filter(c => c.adminStatus === "pending");
-  const activeChefs = chefList.filter(c => c.adminStatus === "active");
-  const suspendedChefs = chefList.filter(c => c.adminStatus === "suspended");
-
-  const approveChef = (id) => setChefList(list => list.map(c => c.id === id ? { ...c, adminStatus: "active" } : c));
-  const rejectChef = (id) => setChefList(list => list.map(c => c.id === id ? { ...c, adminStatus: "rejected" } : c));
-  const suspendChef = (id) => setChefList(list => list.map(c => c.id === id ? { ...c, adminStatus: "suspended" } : c));
-  const reinstateChef = (id) => setChefList(list => list.map(c => c.id === id ? { ...c, adminStatus: "active" } : c));
-
-  const [users, setUsers] = useState([
-    { id: "u1", name: "Nimal Perera", email: "nimal@gmail.com", role: "customer", joined: "2026-01-10", bookings: 4 },
-    { id: "u2", name: "Aisha Fernando", email: "aisha@gmail.com", role: "customer", joined: "2026-02-15", bookings: 2 },
-    { id: "u3", name: "David Smith", email: "david@gmail.com", role: "customer", joined: "2026-03-01", bookings: 1 },
-    { id: "u4", name: "Chamari Silva", email: "chamari@gmail.com", role: "customer", joined: "2026-03-20", bookings: 3 },
-    { id: "u5", name: "Ruwan De Silva", email: "ruwan@gmail.com", role: "customer", joined: "2026-04-05", bookings: 0 },
-    { id: "u6", name: "Nadeeka Perera", email: "nadeeka@gmail.com", role: "customer", joined: "2026-04-18", bookings: 0 },
-  ]);
-  const [promoteModal, setPromoteModal] = useState(null);
-  const promoteToChef = (userId) => {
-    setUsers(list => list.map(u => u.id === userId ? { ...u, role: "chef" } : u));
-    setPromoteModal(null);
-  };
-  const demoteToCustomer = (userId) => setUsers(list => list.map(u => u.id === userId ? { ...u, role: "customer" } : u));
 
   return (
-    <div style={{ display: "flex", minHeight: "calc(100vh - 60px)", flexDirection: "row" }}>
-      <div style={{ width: 220, background: "#0C1220", padding: "24px 10px", flexShrink: 0 }}>
+    <div style={{ display: "flex", minHeight: "calc(100vh - 64px)" }}>
+      <div style={{ width: 240, background: "#0C1220", padding: "24px 12px", flexShrink: 0 }}>
         <div style={{ padding: "0 8px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: 16 }}>
-          <div style={{ fontFamily: FONTS.heading, fontSize: 15, color: "white", fontWeight: 700 }}>🍽️ ChefAtHome</div>
+          <div style={{ fontFamily: FONTS.heading, fontSize: 16, color: "white", fontWeight: 700 }}>🍽️ ChefAtHome</div>
           <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, marginTop: 2 }}>Super Admin Panel</div>
         </div>
-        {[["dashboard","📊","Dashboard"],["users","👥","Users & Chefs"],["chefs","👨‍🍳","Chef Approvals"],["bookings","📅","Bookings"],["payments","💳","Payments"],["reports","📈","Analytics"],["settings","⚙️","Settings"]].map(([id,icon,label]) => (
+        {[["dashboard","📊","Dashboard"],["bookings","📅","Bookings"],["chefs","👨‍🍳","Chefs"],["customers","👥","Customers"],["payments","💳","Payments"],["reports","📈","Reports & Analytics"],["settings","⚙️","Settings"]].map(([id,icon,label]) => (
           <div key={id} className={`sidebar-link ${tab===id?"active":""}`} onClick={() => setTab(id)}>
-            <span>{icon}</span><span style={{ fontSize: 13 }}>{label}</span>
+            <span>{icon}</span><span>{label}</span>
           </div>
         ))}
       </div>
-      <div style={{ flex: 1, padding: "28px 28px", background: COLORS.surface, overflowY: "auto" }}>
+      <div style={{ flex: 1, padding: 32, background: COLORS.surface, overflowY: "auto" }}>
         {tab === "dashboard" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28 }}>
@@ -1744,240 +1458,60 @@ function AdminPanel() {
             </div>
           </div>
         )}
-        {tab === "users" && (
-          <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-              <div>
-                <h2 style={{ fontFamily: FONTS.heading, fontSize: 24, marginBottom: 4 }}>Users & Role Management</h2>
-                <p style={{ color: COLORS.textMuted, fontSize: 14 }}>Promote customers to chefs — they will get access to the Chef Panel</p>
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <span style={{ background: COLORS.infoLight, color: COLORS.info, padding: "6px 12px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>{users.filter(u=>u.role==="chef").length} Chefs</span>
-                <span style={{ background: COLORS.successLight, color: COLORS.success, padding: "6px 12px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>{users.filter(u=>u.role==="customer").length} Customers</span>
-              </div>
-            </div>
-
-            {/* Chefs section */}
-            {users.filter(u => u.role === "chef").length > 0 && (
-              <div style={{ marginBottom: 28 }}>
-                <h3 style={{ fontFamily: FONTS.heading, fontSize: 17, marginBottom: 14, color: COLORS.info }}>👨‍🍳 Active Chefs</h3>
-                {users.filter(u => u.role === "chef").map(u => (
-                  <div key={u.id} style={{ background: COLORS.infoLight, borderRadius: 12, border: `1px solid ${COLORS.info}33`, padding: "16px 20px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                      <Avatar initials={u.name.split(" ").map(n=>n[0]).join("")} size={42} color={COLORS.info} />
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: 15 }}>{u.name}</div>
-                        <div style={{ fontSize: 13, color: COLORS.textMuted }}>📧 {u.email} · Chef Panel Access ✓</div>
-                      </div>
-                    </div>
-                    <button onClick={() => demoteToCustomer(u.id)} style={{ background: COLORS.dangerLight, color: COLORS.danger, padding: "7px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>Remove Chef Role</button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* All customers */}
-            <h3 style={{ fontFamily: FONTS.heading, fontSize: 17, marginBottom: 14 }}>👥 All Customers</h3>
-            {users.filter(u => u.role === "customer").map(u => (
-              <div key={u.id} style={{ background: "white", borderRadius: 12, border: `1px solid ${COLORS.border}`, padding: "16px 20px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                  <Avatar initials={u.name.split(" ").map(n=>n[0]).join("")} size={42} color={COLORS.primary} />
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 15 }}>{u.name}</div>
-                    <div style={{ fontSize: 13, color: COLORS.textMuted }}>📧 {u.email} · Joined {u.joined} · {u.bookings} bookings</div>
-                  </div>
-                </div>
-                <button onClick={() => setPromoteModal(u)} style={{ background: COLORS.primaryLight, color: COLORS.primary, padding: "7px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: `1px solid ${COLORS.primary}44`, cursor: "pointer" }}>
-                  👨‍🍳 Make Chef
-                </button>
-              </div>
-            ))}
-
-            {/* Promote modal */}
-            {promoteModal && (
-              <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setPromoteModal(null)}>
-                <div className="modal" style={{ maxWidth: 420 }}>
-                  <div style={{ textAlign: "center", marginBottom: 24 }}>
-                    <div style={{ fontSize: 48, marginBottom: 12 }}>👨‍🍳</div>
-                    <h2 style={{ fontFamily: FONTS.heading, fontSize: 22, marginBottom: 8 }}>Promote to Chef?</h2>
-                    <p style={{ color: COLORS.textMuted, fontSize: 14 }}>
-                      <strong>{promoteModal.name}</strong> will get access to the Chef Panel where they can manage bookings, set availability, and view earnings.
-                    </p>
-                  </div>
-                  <div style={{ background: COLORS.infoLight, borderRadius: 10, padding: "14px 16px", marginBottom: 20, fontSize: 13, color: COLORS.info }}>
-                    ℹ️ They will see a "My Panel" button in the navbar after their next login.
-                  </div>
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <button onClick={() => promoteToChef(promoteModal.id)} style={{ flex: 1, background: COLORS.primary, color: "white", padding: "12px", borderRadius: 10, fontSize: 14, fontWeight: 700, border: "none", cursor: "pointer" }}>✓ Confirm Promotion</button>
-                    <button onClick={() => setPromoteModal(null)} style={{ flex: 1, background: COLORS.surface, border: `1px solid ${COLORS.border}`, padding: "12px", borderRadius: 10, fontSize: 14, cursor: "pointer" }}>Cancel</button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
         {tab === "chefs" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
               <h2 style={{ fontFamily: FONTS.heading, fontSize: 24 }}>Chef Management</h2>
               <div style={{ display: "flex", gap: 8 }}>
-                {pendingChefs.length > 0 && <span style={{ background: COLORS.warningLight, color: COLORS.warning, padding: "6px 12px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>⏳ {pendingChefs.length} Pending Approval</span>}
-                {suspendedChefs.length > 0 && <span style={{ background: COLORS.dangerLight, color: COLORS.danger, padding: "6px 12px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>🚫 {suspendedChefs.length} Suspended</span>}
+                <span style={{ background: COLORS.warningLight, color: COLORS.warning, padding: "6px 12px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>2 Pending Approval</span>
+                <button className="btn-primary" style={{ fontSize: 13 }}>+ Add Chef</button>
               </div>
             </div>
-
-            {/* Pending Approvals */}
             {pendingChefs.length > 0 && (
-              <div style={{ background: COLORS.warningLight, borderRadius: 16, padding: 24, marginBottom: 28, border: `1px solid ${COLORS.warning}44` }}>
-                <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 16, color: COLORS.warning }}>⏳ Pending Chef Applications</div>
-                {pendingChefs.map(c => (
-                  <div key={c.id} style={{ background: "white", borderRadius: 12, padding: 20, marginBottom: 12, border: `1px solid ${COLORS.border}` }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-                        <Avatar initials={c.image || c.name.split(" ").map(n=>n[0]).join("")} size={48} color="#B45309" />
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: 16 }}>{c.name}</div>
-                          <div style={{ fontSize: 13, color: COLORS.textMuted }}>{c.specialties} · {c.location} · {c.experience}</div>
-                          <div style={{ fontSize: 13, color: COLORS.textMuted }}>📧 {c.email} · 📱 {c.phone}</div>
-                          <div style={{ fontSize: 13, color: COLORS.textMuted }}>🪪 NIC: {c.nic} · 📍 {c.address}</div>
-                        </div>
-                      </div>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button onClick={() => setViewChef(c)} style={{ background: COLORS.infoLight, color: COLORS.info, padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>👁 View Docs</button>
-                        <button onClick={() => approveChef(c.id)} style={{ background: COLORS.successLight, color: COLORS.success, padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer" }}>✓ Approve</button>
-                        <button onClick={() => rejectChef(c.id)} style={{ background: COLORS.dangerLight, color: COLORS.danger, padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer" }}>✗ Reject</button>
-                      </div>
+              <div style={{ background: COLORS.warningLight, borderRadius: 12, padding: 20, marginBottom: 24, border: `1px solid ${COLORS.warning}33` }}>
+                <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12, color: COLORS.warning }}>⏳ Pending Approvals</div>
+                {pendingChefs.map((c, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "white", borderRadius: 8, padding: "12px 16px", marginBottom: 8 }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</div>
+                      <div style={{ fontSize: 12, color: COLORS.textMuted }}>{c.type === "premium" ? "Premium" : "Local"} Chef · {c.location}</div>
                     </div>
-                    {/* Document checklist */}
-                    <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-                      {[["Police Clearance PDF","police"],["NIC","nic"],["Photo","photo"],["Food Safety Cert","foodCert"]].map(([label, key]) => (
-                        <span key={key} style={{ padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, background: c.documents[key] ? COLORS.successLight : COLORS.dangerLight, color: c.documents[key] ? COLORS.success : COLORS.danger }}>
-                          {c.documents[key] ? "✓" : "✗"} {label}
-                        </span>
-                      ))}
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => setPendingChefs(p => p.filter((_,j)=>j!==i))} style={{ background: COLORS.successLight, color: COLORS.success, padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 600, border: "none" }}>✓ Approve</button>
+                      <button onClick={() => setPendingChefs(p => p.filter((_,j)=>j!==i))} style={{ background: COLORS.dangerLight, color: COLORS.danger, padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 600, border: "none" }}>✗ Reject</button>
                     </div>
                   </div>
                 ))}
               </div>
             )}
-
-            {/* Active Chefs */}
-            <h3 style={{ fontFamily: FONTS.heading, fontSize: 18, marginBottom: 16 }}>Active Chefs ({activeChefs.length})</h3>
-            {activeChefs.map(c => (
-              <div key={c.id} style={{ background: "white", borderRadius: 12, border: `1px solid ${COLORS.border}`, padding: 20, marginBottom: 10, display: "flex", alignItems: "center", gap: 16, justifyContent: "space-between" }}>
+            {chefs.map(c => (
+              <div key={c.id} style={{ background: "white", borderRadius: 12, border: `1px solid ${COLORS.border}`, padding: 20, marginBottom: 12, display: "flex", alignItems: "center", gap: 16, justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                  <Avatar initials={c.image || c.name.split(" ").map(n=>n[0]).join("")} size={44} color={c.type==="premium"?"#B45309":COLORS.primary} />
+                  <Avatar initials={c.image} size={44} color={c.type==="premium"?"#B45309":COLORS.primary} />
                   <div>
                     <div style={{ fontWeight: 600, fontSize: 15 }}>{c.name}</div>
-                    <div style={{ fontSize: 13, color: COLORS.textMuted }}>{c.location} · {c.experience} · ⭐ {c.rating} ({c.reviews} reviews)</div>
+                    <div style={{ fontSize: 13, color: COLORS.textMuted }}>{c.location} · {c.experience}</div>
                   </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
                   <Badge type={c.badge} />
-                  <button onClick={() => setViewChef(c)} style={{ background: COLORS.infoLight, color: COLORS.info, padding: "6px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>👁 View</button>
-                  <button onClick={() => suspendChef(c.id)} style={{ background: COLORS.dangerLight, color: COLORS.danger, padding: "6px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>🚫 Suspend</button>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}><Star value={c.rating} /> {c.rating}</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={{ background: COLORS.infoLight, color: COLORS.info, padding: "6px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600, border: "none" }}>View</button>
+                    <button style={{ background: COLORS.dangerLight, color: COLORS.danger, padding: "6px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600, border: "none" }}>Suspend</button>
+                  </div>
                 </div>
               </div>
             ))}
-
-            {/* Suspended Chefs */}
-            {suspendedChefs.length > 0 && (
-              <>
-                <h3 style={{ fontFamily: FONTS.heading, fontSize: 18, marginBottom: 16, marginTop: 28, color: COLORS.danger }}>Suspended Chefs ({suspendedChefs.length})</h3>
-                {suspendedChefs.map(c => (
-                  <div key={c.id} style={{ background: COLORS.dangerLight, borderRadius: 12, border: `1px solid ${COLORS.danger}33`, padding: 20, marginBottom: 10, display: "flex", alignItems: "center", gap: 16, justifyContent: "space-between" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                      <Avatar initials={c.image || c.name.split(" ").map(n=>n[0]).join("")} size={44} color={COLORS.danger} />
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: 15 }}>{c.name}</div>
-                        <div style={{ fontSize: 13, color: COLORS.textMuted }}>{c.location} · Suspended</div>
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={() => setViewChef(c)} style={{ background: "white", color: COLORS.info, padding: "6px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: `1px solid ${COLORS.border}`, cursor: "pointer" }}>👁 View</button>
-                      <button onClick={() => reinstateChef(c.id)} style={{ background: COLORS.successLight, color: COLORS.success, padding: "6px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>✓ Reinstate</button>
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
-
-            {/* Chef Detail Modal */}
-            {viewChef && (
-              <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setViewChef(null)}>
-                <div className="modal" style={{ maxWidth: 620, maxHeight: "85vh", overflowY: "auto" }}>
-                  <button onClick={() => setViewChef(null)} style={{ position: "absolute", top: 16, right: 16, background: "none", border: "none", fontSize: 20, cursor: "pointer", color: COLORS.textMuted }}>✕</button>
-                  <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
-                    <Avatar initials={viewChef.image || viewChef.name.split(" ").map(n=>n[0]).join("")} size={60} color="#B45309" />
-                    <div>
-                      <h2 style={{ fontFamily: FONTS.heading, fontSize: 22, marginBottom: 4 }}>{viewChef.name}</h2>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <Badge type={viewChef.badge} />
-                        <span style={{ padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, background: viewChef.adminStatus === "active" ? COLORS.successLight : viewChef.adminStatus === "pending" ? COLORS.warningLight : COLORS.dangerLight, color: viewChef.adminStatus === "active" ? COLORS.success : viewChef.adminStatus === "pending" ? COLORS.warning : COLORS.danger }}>
-                          {viewChef.adminStatus.charAt(0).toUpperCase() + viewChef.adminStatus.slice(1)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20 }}>
-                    {[["📧 Email", viewChef.email], ["📱 Phone", viewChef.phone], ["🪪 NIC", viewChef.nic], ["📍 Address", viewChef.address], ["📅 Applied", viewChef.joinDate], ["🍳 Experience", viewChef.experience], ["🌍 Location", viewChef.location], ["💰 Price", `LKR ${viewChef.price?.toLocaleString()}`]].map(([k,v]) => (
-                      <div key={k} style={{ background: COLORS.surface, borderRadius: 8, padding: "10px 14px" }}>
-                        <div style={{ fontSize: 12, color: COLORS.textMuted }}>{k}</div>
-                        <div style={{ fontWeight: 600, fontSize: 14, marginTop: 2 }}>{v}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {viewChef.bio && (
-                    <div style={{ background: COLORS.surface, borderRadius: 8, padding: 14, marginBottom: 20 }}>
-                      <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 4 }}>Bio</div>
-                      <div style={{ fontSize: 14, lineHeight: 1.6 }}>{viewChef.bio}</div>
-                    </div>
-                  )}
-
-                  <div style={{ marginBottom: 24 }}>
-                    <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12 }}>📋 Submitted Documents</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                      {[["Police Clearance PDF","police","📄"],["NIC (Front & Back)","nic","🪪"],["Profile Photo","photo","📷"],["Food Safety Certificate","foodCert","🥗"]].map(([label, key, icon]) => (
-                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: viewChef.documents[key] ? COLORS.successLight : COLORS.dangerLight, border: `1px solid ${viewChef.documents[key] ? COLORS.success : COLORS.danger}33` }}>
-                          <span style={{ fontSize: 20 }}>{icon}</span>
-                          <div>
-                            <div style={{ fontSize: 13, fontWeight: 600 }}>{label}</div>
-                            <div style={{ fontSize: 12, color: viewChef.documents[key] ? COLORS.success : COLORS.danger, fontWeight: 600 }}>{viewChef.documents[key] ? "✓ Submitted" : "✗ Missing"}</div>
-                          </div>
-                          {viewChef.documents[key] && <button style={{ marginLeft: "auto", background: "white", border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}>View</button>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div style={{ display: "flex", gap: 10 }}>
-                    {viewChef.adminStatus === "pending" && <>
-                      <button onClick={() => { approveChef(viewChef.id); setViewChef(null); }} style={{ flex: 1, background: COLORS.success, color: "white", padding: "12px", borderRadius: 10, fontSize: 14, fontWeight: 700, border: "none", cursor: "pointer" }}>✓ Approve Chef</button>
-                      <button onClick={() => { rejectChef(viewChef.id); setViewChef(null); }} style={{ flex: 1, background: COLORS.danger, color: "white", padding: "12px", borderRadius: 10, fontSize: 14, fontWeight: 700, border: "none", cursor: "pointer" }}>✗ Reject</button>
-                    </>}
-                    {viewChef.adminStatus === "active" && (
-                      <button onClick={() => { suspendChef(viewChef.id); setViewChef(null); }} style={{ flex: 1, background: COLORS.danger, color: "white", padding: "12px", borderRadius: 10, fontSize: 14, fontWeight: 700, border: "none", cursor: "pointer" }}>🚫 Suspend Chef</button>
-                    )}
-                    {viewChef.adminStatus === "suspended" && (
-                      <button onClick={() => { reinstateChef(viewChef.id); setViewChef(null); }} style={{ flex: 1, background: COLORS.success, color: "white", padding: "12px", borderRadius: 10, fontSize: 14, fontWeight: 700, border: "none", cursor: "pointer" }}>✓ Reinstate Chef</button>
-                    )}
-                    <button onClick={() => setViewChef(null)} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, padding: "12px 20px", borderRadius: 10, fontSize: 14, cursor: "pointer" }}>Close</button>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         )}
         {tab === "bookings" && (
           <div>
             <h2 style={{ fontFamily: FONTS.heading, fontSize: 24, marginBottom: 24 }}>All Bookings</h2>
             <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-              {["All","Confirmed","Pending","Cancelled"].map(f => <button key={f} className={`tab ${bookingFilter===f?"active":""}`} onClick={() => setBookingFilter(f)}>{f}</button>)}
+              {["All","Confirmed","Pending","Cancelled"].map(f => <button key={f} className={`tab ${f==="All"?"active":""}`}>{f}</button>)}
             </div>
-            {bookings.filter(b => bookingFilter === "All" || b.status.toLowerCase() === bookingFilter.toLowerCase()).map(b => (
+            {bookings.map(b => (
               <div key={b.id} style={{ background: "white", borderRadius: 12, border: `1px solid ${COLORS.border}`, padding: 24, marginBottom: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                   <div>
@@ -2098,40 +1632,11 @@ function AuthModal({ mode, setMode, onClose }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
-  const [view, setView] = useState(mode);
-  const [showPassword, setShowPassword] = useState(false);
-
-  // Password strength checker
-  const checkPassword = (pwd) => {
-    const checks = {
-      length: pwd.length >= 8,
-      upper: /[A-Z]/.test(pwd),
-      lower: /[a-z]/.test(pwd),
-      number: /[0-9]/.test(pwd),
-      special: /[!@#$%^&*(),.?":{}|<>]/.test(pwd),
-    };
-    const passed = Object.values(checks).filter(Boolean).length;
-    const strength = passed <= 2 ? "weak" : passed <= 3 ? "fair" : passed === 4 ? "good" : "strong";
-    return { checks, strength, passed };
-  };
-
-  const pwdStrength = form.password ? checkPassword(form.password) : null;
-  const strengthColor = { weak: COLORS.danger, fair: COLORS.warning, good: COLORS.info, strong: COLORS.success };
-  const strengthLabel = { weak: "Weak", fair: "Fair", good: "Good", strong: "Strong 💪" };
+  const [view, setView] = useState(mode); // "login" | "signup" | "reset"
 
   const handleSubmit = async () => {
     setError(""); setSuccessMsg("");
     if (!form.email || (!form.password && view !== "reset")) return setError("Please fill in all fields.");
-
-    // Password validation on signup
-    if (view === "signup") {
-      if (!form.name) return setError("Please enter your full name.");
-      if (form.password.length < 8) return setError("Password must be at least 8 characters.");
-      if (!/[A-Z]/.test(form.password)) return setError("Password must contain at least one uppercase letter.");
-      if (!/[a-z]/.test(form.password)) return setError("Password must contain at least one lowercase letter.");
-      if (!/[0-9]/.test(form.password)) return setError("Password must contain at least one number.");
-    }
-
     setLoading(true);
     try {
       if (view === "reset") {
@@ -2141,8 +1646,10 @@ function AuthModal({ mode, setMode, onClose }) {
         return;
       }
       if (view === "signup") {
+        if (!form.name) return setError("Please enter your full name.");
         const data = await signUp(form.email, form.password, form.name, form.role);
         if (!data.access_token) {
+          // Email confirmation required
           setSuccessMsg("✅ Account created! Please check your email to confirm your account.");
           setLoading(false);
           return;
@@ -2208,11 +1715,11 @@ function AuthModal({ mode, setMode, onClose }) {
         {/* Form fields */}
         <div style={{ display: "grid", gap: 14 }}>
           {view === "signup" && (
-          <div>
-            <label className="label">Full Name</label>
-            <input className="input" placeholder="Your full name" value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} />
-          </div>
-        )}
+            <div>
+              <label className="label">Full Name</label>
+              <input className="input" placeholder="Your full name" value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} />
+            </div>
+          )}
           <div>
             <label className="label">Email Address</label>
             <input className="input" type="email" placeholder="your@email.com" value={form.email} onChange={e => setForm(f => ({...f, email: e.target.value}))} onKeyDown={e => e.key === "Enter" && handleSubmit()} />
@@ -2220,56 +1727,17 @@ function AuthModal({ mode, setMode, onClose }) {
           {view !== "reset" && (
             <div>
               <label className="label">Password</label>
-              <div style={{ position: "relative" }}>
-                <input
-                  className="input"
-                  type={showPassword ? "text" : "password"}
-                  placeholder={view === "signup" ? "Min 8 chars, letters & numbers" : "••••••••"}
-                  value={form.password}
-                  onChange={e => setForm(f => ({...f, password: e.target.value}))}
-                  onKeyDown={e => e.key === "Enter" && handleSubmit()}
-                  style={{ paddingRight: 44 }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(s => !s)}
-                  style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 16, color: COLORS.textMuted }}
-                >
-                  {showPassword ? "🙈" : "👁️"}
-                </button>
-              </div>
-              {/* Password strength meter — only on signup */}
-              {view === "signup" && form.password && pwdStrength && (
-                <div style={{ marginTop: 10 }}>
-                  {/* Strength bar */}
-                  <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
-                    {[1,2,3,4,5].map(i => (
-                      <div key={i} style={{ flex: 1, height: 4, borderRadius: 4, background: i <= pwdStrength.passed ? strengthColor[pwdStrength.strength] : COLORS.border, transition: "background 0.3s" }} />
-                    ))}
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <span style={{ fontSize: 12, color: strengthColor[pwdStrength.strength], fontWeight: 600 }}>
-                      {strengthLabel[pwdStrength.strength]}
-                    </span>
-                    <span style={{ fontSize: 11, color: COLORS.textMuted }}>{pwdStrength.passed}/5 requirements</span>
-                  </div>
-                  {/* Checklist */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-                    {[
-                      [pwdStrength.checks.length, "At least 8 characters"],
-                      [pwdStrength.checks.upper, "Uppercase letter (A-Z)"],
-                      [pwdStrength.checks.lower, "Lowercase letter (a-z)"],
-                      [pwdStrength.checks.number, "Number (0-9)"],
-                      [pwdStrength.checks.special, "Special character (!@#)"],
-                    ].map(([passed, label]) => (
-                      <div key={label} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11 }}>
-                        <span style={{ color: passed ? COLORS.success : COLORS.textLight, fontWeight: 700 }}>{passed ? "✓" : "○"}</span>
-                        <span style={{ color: passed ? COLORS.text : COLORS.textLight }}>{label}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <input className="input" type="password" placeholder="••••••••" value={form.password} onChange={e => setForm(f => ({...f, password: e.target.value}))} onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+            </div>
+          )}
+          {view === "signup" && (
+            <div>
+              <label className="label">I am a</label>
+              <select className="input" value={form.role} onChange={e => setForm(f => ({...f, role: e.target.value}))}>
+                <option value="customer">Customer — Book a Chef</option>
+                <option value="chef">Chef — Offer My Services</option>
+                <option value="admin">Admin — Platform Management</option>
+              </select>
             </div>
           )}
         </div>
@@ -2423,10 +1891,8 @@ function AppInner() {
     );
   }
 
-  const SUPER_ADMIN_EMAIL = "judethayaan@gmail.com";
-  const isAdmin = user?.email === SUPER_ADMIN_EMAIL || user?.role === "admin";
-  const isChef = user?.role === "chef";
-  const navUser = user ? { ...user, role: isAdmin ? "admin" : isChef ? "chef" : "customer" } : null;
+  // Adapt old Navbar/BookingPage signature: pass user from context
+  const navUser = user ? { ...user } : null;
 
   return (
     <div style={{ minHeight: "100vh", background: COLORS.surface }}>
