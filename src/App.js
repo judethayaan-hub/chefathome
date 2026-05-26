@@ -10,7 +10,17 @@ const K = {
   session:"cah_session", users:"cah_users", bookings:"cah_bookings",
   proposals:"cah_proposals", reviews:"cah_reviews", settings:"cah_settings",
   apps:"cah_chef_apps", chefFees:"cah_chef_fees", feeSugs:"cah_fee_sugs",
+  dynamicChefs:"cah_dynamic_chefs",
+  activityLog:"cah_activity_log",
+  suspendedChefs:"cah_suspended_chefs",
+  chefHistory:"cah_chef_history",
+  chefIdCounter:"cah_chef_id_counter",
+  maintAdminEmails:"cah_maint_admin_emails",
 };
+// Maintenance admin whitelist helpers
+const loadMaintAdminEmails = () => ls.get(K.maintAdminEmails, []);
+const saveMaintAdminEmails = (emails) => ls.set(K.maintAdminEmails, emails);
+const isMaintAdminEmail = (email) => loadMaintAdminEmails().map(e=>e.toLowerCase()).includes((email||"").toLowerCase());
 const ls = {
   get: (k, fb=null) => { try { const v=localStorage.getItem(k); return v?JSON.parse(v):fb; } catch { return fb; } },
   set: (k, v)       => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
@@ -37,8 +47,28 @@ const loadApps      = ()  => ls.get(K.apps, []);
 const saveApps      = (a) => ls.set(K.apps, a);
 const loadChefFees  = ()  => ls.get(K.chefFees, {});
 const saveChefFees  = (f) => ls.set(K.chefFees, f);
-const loadFeeSugs   = ()  => ls.get(K.feeSugs, []);
-const saveFeeSugs   = (f) => ls.set(K.feeSugs, f);
+const loadFeeSugs      = ()  => ls.get(K.feeSugs, []);
+const saveFeeSugs      = (f) => ls.set(K.feeSugs, f);
+const loadDynamicChefs = ()  => ls.get(K.dynamicChefs, []);
+const saveDynamicChefs = (c) => ls.set(K.dynamicChefs, c);
+const addDynamicChef   = (c) => { const all=loadDynamicChefs(); if(!all.find(x=>x.email===c.email)){ all.push(c); saveDynamicChefs(all); } };
+const loadActivityLog  = ()  => ls.get(K.activityLog, []);
+const addActivityEvent = (ev) => { const all=loadActivityLog(); all.push({...ev, at:new Date().toISOString()}); if(all.length>500) all.splice(0, all.length-500); ls.set(K.activityLog, all); };
+
+// ─── Suspended Chefs & Chef History ──────────────────────────────────────────
+const loadSuspendedChefs  = ()  => ls.get(K.suspendedChefs, []);
+const saveSuspendedChefs  = (s) => ls.set(K.suspendedChefs, s);
+const loadChefHistory     = ()  => ls.get(K.chefHistory, []);
+const addChefHistoryEvent = (ev) => { const all=loadChefHistory(); all.unshift({...ev, at:new Date().toISOString()}); if(all.length>1000) all.splice(1000); ls.set(K.chefHistory, all); };
+
+// ─── Chef ID Counter ──────────────────────────────────────────────────────────
+const getNextChefDisplayId = () => {
+  const counter = (ls.get(K.chefIdCounter, 6)); // static chefs occupy 1–6
+  const next = counter + 1;
+  ls.set(K.chefIdCounter, next);
+  return `CHF-${String(next).padStart(3,"0")}`;
+};
+const getStaticChefDisplayId = (idx) => `CHF-${String(idx+1).padStart(3,"0")}`;
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
 const SB_URL = "https://fhvwafasykldkuaqrelz.supabase.co";
@@ -59,8 +89,48 @@ const sb = (() => {
       const redirectTo = window.location.href;
       window.location.href = `${SB_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectTo)}`;
     },
+    // DB helpers
+    from: (table) => ({
+      select: (q="*",params="") => req(`/rest/v1/${table}?select=${q}${params}`),
+      insert: (body)            => req(`/rest/v1/${table}`,"POST",body,{"Prefer":"return=representation"}),
+      upsert: (body)            => req(`/rest/v1/${table}`,"POST",body,{"Prefer":"resolution=merge-duplicates,return=representation"}),
+      delete: (match)           => req(`/rest/v1/${table}?${match}`,"DELETE"),
+    }),
   };
 })();
+
+// ─── Supabase Maint Admin Whitelist ──────────────────────────────────────────
+// Table: maint_admin_emails (id uuid, email text unique, created_at timestamptz)
+// Falls back to localStorage if Supabase unavailable
+const sbLoadMaintAdminEmails = async () => {
+  try {
+    const rows = await sb.from("maint_admin_emails").select("email");
+    const emails = rows.map(r => r.email);
+    saveMaintAdminEmails(emails); // keep local cache in sync
+    return emails;
+  } catch {
+    return loadMaintAdminEmails(); // fallback to localStorage
+  }
+};
+const sbAddMaintAdminEmail = async (email) => {
+  try {
+    await sb.from("maint_admin_emails").upsert({email: email.toLowerCase()});
+  } catch(e) { console.warn("Supabase maint admin insert failed, using localStorage only", e); }
+  const emails = loadMaintAdminEmails();
+  if (!emails.map(e=>e.toLowerCase()).includes(email.toLowerCase())) {
+    saveMaintAdminEmails([...emails, email.toLowerCase()]);
+  }
+};
+const sbRemoveMaintAdminEmail = async (email) => {
+  try {
+    await sb.from("maint_admin_emails").delete(`email=eq.${encodeURIComponent(email.toLowerCase())}`);
+  } catch(e) { console.warn("Supabase maint admin delete failed, using localStorage only", e); }
+  saveMaintAdminEmails(loadMaintAdminEmails().filter(e => e.toLowerCase() !== email.toLowerCase()));
+};
+const sbIsMaintAdminEmail = async (email) => {
+  const emails = await sbLoadMaintAdminEmails();
+  return emails.map(e=>e.toLowerCase()).includes((email||"").toLowerCase());
+};
 
 // ─── Auth Context ─────────────────────────────────────────────────────────────
 const AuthCtx = createContext(null);
@@ -76,8 +146,12 @@ function AuthProvider({ children }) {
     const email = ud.email;
     let role = ud.user_metadata?.role || "customer";
     if (email === SUPER_ADMIN_EMAIL) role = "super_admin";
-    const stored = loadUsers().find(u => u.email === email);
-    if (stored?.role && role !== "super_admin") role = stored.role;
+    // Whitelist check: if email is in maintAdminEmails, always assign maintenance_admin
+    if (role !== "super_admin" && isMaintAdminEmail(email)) role = "maintenance_admin";
+    else {
+      const stored = loadUsers().find(u => u.email === email);
+      if (stored?.role && role !== "super_admin") role = stored.role;
+    }
     return {
       id: ud.id, email,
       name: ud.user_metadata?.full_name || ud.user_metadata?.name
@@ -88,10 +162,16 @@ function AuthProvider({ children }) {
 
   const ensureStore = useCallback((email, name, role) => {
     const users = loadUsers();
-    if (!users.find(u => u.email === email)) {
+    const idx = users.findIndex(u => u.email === email);
+    if (idx < 0) {
       users.push({email, name, role, joinedAt:new Date().toISOString()});
-      saveUsers(users);
+    } else {
+      if (name && !users[idx].name) users[idx].name = name;
+      if (!users[idx].joinedAt) users[idx].joinedAt = new Date().toISOString();
+      if (role !== "super_admin" && !users[idx].role) users[idx].role = role;
     }
+    saveUsers(users);
+    window.dispatchEvent(new StorageEvent("storage", {key: "cah_users"}));
   }, []);
 
   useEffect(() => {
@@ -102,24 +182,31 @@ function AuthProvider({ children }) {
       const refresh_token = params.get("refresh_token");
       if (access_token) {
         const sessionData = { access_token, refresh_token };
-        sb.getUser(access_token)
-          .then(ud => {
-            ls.set(K.session, sessionData); setSession(sessionData);
-            const u = formatUser(ud); setUser(u); ensureStore(u.email, u.name, u.role);
-            setLoginKey(k=>k+1);
-            window.history.replaceState(null, "", window.location.pathname);
-          })
-          .catch(()=>{})
-          .finally(()=>setLoading(false));
+        // Refresh whitelist from Supabase before formatting user (Google OAuth login)
+        sbLoadMaintAdminEmails().catch(()=>{}).finally(()=>{
+          sb.getUser(access_token)
+            .then(ud => {
+              ls.set(K.session, sessionData); setSession(sessionData);
+              const u = formatUser(ud); setUser(u); ensureStore(u.email, u.name, u.role);
+              addActivityEvent({type:"login", email:u.email, name:u.name});
+              setLoginKey(k=>k+1);
+              window.history.replaceState(null, "", window.location.pathname);
+            })
+            .catch(()=>{})
+            .finally(()=>setLoading(false));
+        });
         return;
       }
     }
     const stored = ls.get(K.session);
     if (stored?.access_token) {
-      sb.getUser(stored.access_token)
-        .then(ud => { setSession(stored); const u=formatUser(ud); setUser(u); ensureStore(u.email,u.name,u.role); })
-        .catch(() => ls.rm(K.session))
-        .finally(() => setLoading(false));
+      // Refresh whitelist on session restore too
+      sbLoadMaintAdminEmails().catch(()=>{}).finally(()=>{
+        sb.getUser(stored.access_token)
+          .then(ud => { setSession(stored); const u=formatUser(ud); setUser(u); ensureStore(u.email,u.name,u.role); })
+          .catch(() => ls.rm(K.session))
+          .finally(() => setLoading(false));
+      });
     } else setLoading(false);
   }, []);
 
@@ -127,15 +214,28 @@ function AuthProvider({ children }) {
     const data = await sb.signIn(email, password);
     if (!data.access_token) throw new Error(data.error_description||"Login failed");
     ls.set(K.session, data); setSession(data);
+    // Refresh Supabase whitelist cache before formatting user so role is correct
+    await sbLoadMaintAdminEmails().catch(()=>{});
     const ud = await sb.getUser(data.access_token);
-    const u = formatUser(ud); setUser(u); ensureStore(u.email,u.name,u.role);
+    const u = formatUser(ud); setUser(u);
+    ensureStore(u.email, u.name, u.role);
+    addActivityEvent({type:"login", email:u.email, name:u.name});
     setLoginKey(k=>k+1); return u;
   };
   const signUp = async (email, password, name) => {
     const data = await sb.signUp(email, password, {full_name:name,role:"customer"});
     if (data.error) throw new Error(data.error.message||"Signup failed");
+    // Refresh whitelist cache so new user gets correct role immediately
+    await sbLoadMaintAdminEmails().catch(()=>{});
+    const isMAdmin = isMaintAdminEmail(email);
+    const role = isMAdmin ? "maintenance_admin" : "customer";
     const users = loadUsers();
-    if (!users.find(u=>u.email===email)) { users.push({email,name,role:"customer",joinedAt:new Date().toISOString()}); saveUsers(users); }
+    if (!users.find(u=>u.email===email)) {
+      users.push({email,name,role,joinedAt:new Date().toISOString()});
+      saveUsers(users);
+      addActivityEvent({type:"signup", email, name});
+      window.dispatchEvent(new StorageEvent("storage",{key:K.users}));
+    }
     if (data.access_token) { ls.set(K.session,data); setSession(data); const ud=await sb.getUser(data.access_token); setUser(formatUser(ud)); setLoginKey(k=>k+1); }
     return data;
   };
@@ -189,6 +289,22 @@ const CHEFS_DATA = [
   {id:5, alias:"Chef E", type:"standard", rating:4.6, reviews:54,  experience:"3 Years",   location:"Nugegoda",      specialties:["Sri Lankan","Vegetarian","South Indian"],       image:"CE", dinners:220,  badge:"Verified",  bio:"Passionate about traditional recipes. Specializes in vegetarian and healthy options.",                       menus:["Traditional Rice & Curry","South Indian Feast","Vegetarian Spread"],    startingFrom:6000},
   {id:6, alias:"Chef F", type:"standard", rating:4.8, reviews:61,  experience:"4 Years",   location:"Nawala",        specialties:["BBQ","Burgers","Grills"],                       image:"CF", dinners:290,  badge:"Verified",  bio:"BBQ and grill specialist who transforms backyards into restaurant-quality dining experiences.",                menus:["BBQ Party","Grill Night","Family BBQ"],                                 startingFrom:10000},
 ];
+
+// Merge static + approved dynamic chefs — always reads fresh from localStorage
+const getAllChefs = () => {
+  const dynamic = loadDynamicChefs();
+  const removedIds = ls.get("cah_removed_chefs", []);
+  const suspendedIds = loadSuspendedChefs().map(s => s.id);
+  const staticChefs = CHEFS_DATA
+    .filter(c => !removedIds.includes(c.id) && !suspendedIds.includes(c.id))
+    .map((c, idx) => ({...c, displayId: getStaticChefDisplayId(idx)}));
+  const newChefs = dynamic.filter(d =>
+    !CHEFS_DATA.find(c => c.alias === d.alias) && !removedIds.includes(d.id) && !suspendedIds.includes(d.id)
+  );
+  return [...staticChefs, ...newChefs];
+};
+// Alias for clarity — same function, guarantees fresh read
+const getActiveChefs = getAllChefs;
 
 const EXPERIENCES = [
   {name:"Biriyani Feast",   rating:4.9, count:120, chef:"Chef D", type:"standard", emoji:"🍛"},
@@ -555,7 +671,9 @@ function ChefCard({chef,onClick}){
 function ChefsPage({setPage,setSelectedChef}){
   const [filter,setFilter]=useState("all");
   const [search,setSearch]=useState("");
-  const filtered=CHEFS_DATA.filter(c=>(filter==="all"||c.type===filter)&&(c.alias.toLowerCase().includes(search.toLowerCase())||c.specialties.some(s=>s.toLowerCase().includes(search.toLowerCase()))));
+  // Always read fresh — getAllChefs reads localStorage directly
+  const allChefs = getAllChefs();
+  const filtered=allChefs.filter(c=>(filter==="all"||c.type===filter)&&(c.alias.toLowerCase().includes(search.toLowerCase())||c.specialties.some(s=>s.toLowerCase().includes(search.toLowerCase()))));
   return(<div style={{maxWidth:1200,margin:"0 auto",padding:"44px 24px"}}>
     <div style={{marginBottom:28}}><div style={{color:C.primary,fontSize:13,fontWeight:600,letterSpacing:1,marginBottom:7}}>✦ OUR CHEFS</div><h1 style={{fontFamily:F.heading,fontSize:36,fontWeight:700,marginBottom:8}}>Find Your Perfect Chef</h1><p style={{color:C.muted,fontSize:15}}>Browse verified chefs · Price confirmed after chef sends proposal</p></div>
     <div style={{display:"flex",gap:11,marginBottom:20,flexWrap:"wrap"}}>
@@ -563,7 +681,7 @@ function ChefsPage({setPage,setSelectedChef}){
       <div style={{display:"flex",gap:7}}>{["all","premium","standard"].map(f=><button key={f} className={`tab ${filter===f?"active":""}`} onClick={()=>setFilter(f)}>{f==="all"?"All":f==="premium"?"Premium":"Standard"}</button>)}</div>
     </div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:20}}>
-      {filtered.map(c=><ChefCard key={c.id} chef={c} onClick={()=>{setSelectedChef(c);setPage("chef-profile");}}/>)}
+      {filtered.length===0?<div style={{gridColumn:"1/-1",textAlign:"center",padding:48,color:C.muted}}>No chefs found matching your search.</div>:filtered.map(c=><ChefCard key={c.id} chef={c} onClick={()=>{setSelectedChef(c);setPage("chef-profile");}}/>)}
     </div>
   </div>);
 }
@@ -951,8 +1069,7 @@ function ProposalPayModal({booking,onSuccess,onClose}) {
     onSuccess={()=>{
       updateBooking(booking.id,{status:"confirmed",amount,commissionAmt:commission,holdAmt:hold});
       if(booking.proposal) updateProposal(booking.proposal.id,{paidAt:new Date().toISOString()});
-      onSuccess();
-    }}
+      onSuccess();    }}
     onClose={()=>setShowPayHere(false)}
   />;
 
@@ -995,9 +1112,12 @@ function ProposalPayModal({booking,onSuccess,onClose}) {
 // ─── Chef Panel ───────────────────────────────────────────────────────────────
 function ChefPanel({user,loginKey}) {
   const [tab,setTab]=useState("overview");
-  const chefData=CHEFS_DATA.find(c=>c.alias===user?.name);
+  // Look up chef by email (dynamic chefs) or by name (static chefs)
+  const allChefs = getAllChefs();
+  const dynamicChefs = loadDynamicChefs();
+  const chefData = dynamicChefs.find(c=>c.email===user?.email) || allChefs.find(c=>c.alias===user?.name) || null;
   // For demo: chef sees all bookings with their chefId OR show by alias
-  const myBookings=loadBookings().filter(b=>b.chefId===chefData?.id||b.chefAlias===user?.name);
+  const myBookings=loadBookings().filter(b=>b.chefId===chefData?.id||b.chefAlias===user?.name||b.chefAlias===chefData?.alias);
   const pendingProposalBookings=myBookings.filter(b=>b.status==="pending_proposal");
   const settings=loadSettings();
 
@@ -1020,6 +1140,12 @@ function ChefPanel({user,loginKey}) {
           <div>
             <h2 style={{fontFamily:F.heading,fontSize:23,marginBottom:4}}>Welcome, {user?.name?.split(" ")[0]||"Chef"} 👋</h2>
             <p style={{color:C.muted,marginBottom:20}}>Your bookings and proposal status.</p>
+            {chefData?.isDynamic&&chefData.startingFrom===0&&(
+              <div style={{background:C.successBg,border:`1px solid ${C.success}44`,borderRadius:11,padding:"13px 17px",marginBottom:16}}>
+                <div style={{fontWeight:700,color:C.success,marginBottom:4}}>🎉 Your chef profile is now live!</div>
+                <div style={{fontSize:13,color:C.success}}>Customers can now find and book you. Ask the super admin to set your starting price so it appears on your card.</div>
+              </div>
+            )}
             {pendingProposalBookings.length>0&&(
               <div style={{background:C.warnBg,border:`1px solid ${C.warn}44`,borderRadius:11,padding:"12px 17px",marginBottom:16,cursor:"pointer",display:"flex",alignItems:"center",gap:10}} onClick={()=>setTab("pending")}>
                 <span>⚠️</span><span style={{fontWeight:700,color:C.warn}}>{pendingProposalBookings.length} booking{pendingProposalBookings.length>1?"s":""} need{pendingProposalBookings.length===1?"s":""} your proposal</span><span style={{marginLeft:"auto",color:C.warn}}>Create now →</span>
@@ -1133,7 +1259,9 @@ function ChefProposalList({bookings,onRefresh}){
 }
 
 function ChefMyProposals({user}){
-  const myProps=loadProposals().filter(p=>p.chefAlias===user?.name||p.chefId===CHEFS_DATA.find(c=>c.alias===user?.name)?.id);
+  const dynamicChef=loadDynamicChefs().find(c=>c.email===user?.email);
+  const chefAlias=dynamicChef?.alias||user?.name;
+  const myProps=loadProposals().filter(p=>p.chefAlias===chefAlias||p.chefAlias===user?.name||p.chefId===getAllChefs().find(c=>c.alias===user?.name)?.id);
   return(<div><h2 style={{fontFamily:F.heading,fontSize:21,marginBottom:18}}>My Submitted Proposals</h2>{myProps.length===0?<EmptyState icon="📋" text="No proposals submitted yet."/>:myProps.slice().reverse().map(p=>{const sc={pending_review:{bg:C.warnBg,c:C.warn,l:"Under Admin Review"},accepted:{bg:C.successBg,c:C.success,l:"Accepted ✓"},rejected:{bg:C.dangerBg,c:C.danger,l:"Rejected"}}[p.status]||{bg:C.surface,c:C.muted,l:p.status};return(<div key={p.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:18,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}><div><div style={{fontWeight:700}}>Booking #{p.bookingId}</div><div style={{fontSize:11,color:C.muted}}>{new Date(p.submittedAt).toLocaleDateString()}</div></div><span style={{background:sc.bg,color:sc.c,padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:600}}>{sc.l}</span></div><div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>{(p.menuItems||[]).map((m,i)=><span key={i} style={{background:C.primaryLight,color:C.primary,padding:"3px 9px",borderRadius:20,fontSize:12}}>🍽 {m.name}</span>)}</div><div style={{fontWeight:700,fontSize:14,color:C.primary}}>{fmtLKR(p.proposedPrice)}</div>{p.notes&&<div style={{fontSize:12,color:C.muted,marginTop:4}}>Note: {p.notes}</div>}</div>);})}</div>);
 }
 function ChefAvailabilityTab(){const [avail,setAvail]=useState({Mon:true,Tue:true,Wed:false,Thu:true,Fri:true,Sat:true,Sun:false});return(<div><h2 style={{fontFamily:F.heading,fontSize:21,marginBottom:16}}>Availability</h2><div style={{background:"white",borderRadius:13,border:`1px solid ${C.border}`,padding:22}}><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:9}}>{Object.entries(avail).map(([day,on])=><div key={day} onClick={()=>setAvail(a=>({...a,[day]:!a[day]}))} style={{textAlign:"center",padding:"12px 5px",borderRadius:11,border:`2px solid ${on?C.primary:C.border}`,background:on?C.primaryLight:"white",cursor:"pointer",transition:"all .2s"}}><div style={{fontSize:11,fontWeight:700,color:on?C.primary:C.muted,textTransform:"uppercase"}}>{day}</div><div style={{fontSize:17,marginTop:5}}>{on?"✅":"❌"}</div></div>)}</div><button className="btn-primary" style={{marginTop:16,padding:"9px 22px"}} onClick={()=>alert("✅ Saved!")}>Save</button></div></div>);}
@@ -1147,16 +1275,24 @@ function ChefJoinRequestForm({user,onSubmit,onCancel}) {
   const [form,setForm]=useState({fullName:user?.name||"",email:user?.email||"",phone:"",nic:"",address:"",city:"",district:"",experience:"",specialties:"",chefType:"standard",bio:"",suggestAllIn:"",suggestCook:"",nicFile:null,policeFile:null,photoFile:null,certFile:null});
   const [errors,setErrors]=useState({});
   const upd=(k,v)=>setForm(f=>({...f,[k]:v}));
-  const handleFile=(k,e)=>{const f=e.target.files[0];if(f)upd(k,f.name);};
+  const handleFile=(k,e)=>{
+    const f=e.target.files[0];
+    if(!f) return;
+    const reader=new FileReader();
+    reader.onload=(ev)=>{
+      upd(k,{name:f.name,type:f.type,data:ev.target.result});
+    };
+    reader.readAsDataURL(f);
+  };
   const validate=()=>{
     const e={};
     if(step===1){if(!form.fullName.trim())e.fullName="Required";if(!form.nic.trim())e.nic="Required";if(!validatePhone(form.phone))e.phone="Enter +94 followed by 9 digits";if(!form.bio.trim())e.bio="Required";}
     if(step===2){if(!form.address.trim())e.address="Required";if(!form.city.trim())e.city="Required";if(!form.district)e.district="Required";if(!form.experience)e.experience="Required";if(!form.specialties.trim())e.specialties="Required";}
-    if(step===3){if(!form.nicFile)e.nicFile="Required";if(!form.policeFile)e.policeFile="Required";if(!form.photoFile)e.photoFile="Required";}
+    if(step===3){if(!form.nicFile?.data)e.nicFile="Required";if(!form.policeFile?.data)e.policeFile="Required";if(!form.photoFile?.data)e.photoFile="Required";}
     setErrors(e);return Object.keys(e).length===0;
   };
   const DISTRICTS=["Colombo","Gampaha","Kalutara","Kandy","Matale","Nuwara Eliya","Galle","Matara","Hambantota","Jaffna","Kilinochchi","Mannar","Vavuniya","Batticaloa","Ampara","Trincomalee","Kurunegala","Puttalam","Anuradhapura","Polonnaruwa","Badulla","Monaragala","Ratnapura","Kegalle"];
-  const submit=()=>{const apps=loadApps();apps.push({id:genId(),userId:user?.id,email:user?.email,...form,submittedAt:new Date().toISOString(),status:"pending"});saveApps(apps);onSubmit();};
+  const submit=()=>{const apps=loadApps();apps.push({id:genId(),userId:user?.id,email:user?.email,...form,submittedAt:new Date().toISOString(),status:"pending"});saveApps(apps);window.dispatchEvent(new StorageEvent("storage",{key:K.apps}));onSubmit();};
   const STEPS=["Personal","Address & Skills","Documents","Review"];
   return(<div style={{background:"white",borderRadius:18,border:`1px solid ${C.border}`,padding:28,maxWidth:640,margin:"0 auto"}}>
     <button onClick={onCancel} style={{background:"none",border:"none",color:C.muted,fontSize:13,marginBottom:11,cursor:"pointer"}}>← Back</button>
@@ -1181,14 +1317,14 @@ function ChefJoinRequestForm({user,onSubmit,onCancel}) {
         <div key={doc.k}><RL req={doc.req}>{doc.icon} {doc.label}</RL><p style={{fontSize:11,color:C.muted,marginBottom:5}}>{doc.desc}</p>
         <label className={`upload-zone ${form[doc.k]?"has-file":""}`} style={{display:"block",cursor:"pointer"}}>
           <input type="file" style={{display:"none"}} accept={doc.types} onChange={e=>handleFile(doc.k,e)}/>
-          {form[doc.k]?<div><div style={{fontSize:17,marginBottom:3}}>✅</div><div style={{fontSize:12,fontWeight:600,color:C.success}}>{form[doc.k]}</div></div>:<div><div style={{fontSize:24,marginBottom:3}}>📎</div><div style={{fontWeight:600,fontSize:12}}>Click to upload · Max 10MB</div></div>}
+          {form[doc.k]?<div><div style={{fontSize:17,marginBottom:3}}>✅</div><div style={{fontSize:12,fontWeight:600,color:C.success}}>{form[doc.k]?.name||form[doc.k]}</div></div>:<div><div style={{fontSize:24,marginBottom:3}}>📎</div><div style={{fontWeight:600,fontSize:12}}>Click to upload · Max 10MB</div></div>}
         </label>{errors[doc.k]&&<span style={{fontSize:11,color:C.danger}}>{errors[doc.k]}</span>}
       </div>))}
     </div>}
     {step===4&&<div className="fade-up">
       <h3 style={{fontFamily:F.heading,fontSize:17,marginBottom:12}}>Review Application</h3>
       <div style={{background:C.surface,borderRadius:11,padding:15,marginBottom:14}}>{[["Name",form.fullName],["NIC",form.nic],["Phone",form.phone],["Type",form.chefType==="premium"?"Premium":"Standard"],["Address",`${form.address}, ${form.city}, ${form.district}`],["Experience",form.experience]].filter(([k,v])=>v).map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${C.border}`,fontSize:12}}><span style={{color:C.muted}}>{k}</span><span style={{fontWeight:600,maxWidth:"55%",textAlign:"right"}}>{v}</span></div>)}</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>{[["🪪 NIC",form.nicFile],["🚔 Police",form.policeFile],["📸 Photo",form.photoFile],["🎓 Certs",form.certFile]].map(([l,f])=><div key={l} style={{background:f?C.successBg:C.surface,borderRadius:7,padding:"7px 10px",fontSize:11,border:`1px solid ${f?C.success+"44":C.border}`}}><div style={{color:C.muted}}>{l}</div><div style={{fontWeight:700,color:f?C.success:C.muted}}>{f?"✓ Uploaded":"– Not uploaded"}</div></div>)}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>{[["🪪 NIC",form.nicFile],["🚔 Police",form.policeFile],["📸 Photo",form.photoFile],["🎓 Certs",form.certFile]].map(([l,f])=><div key={l} style={{background:f?.data?C.successBg:C.surface,borderRadius:7,padding:"7px 10px",fontSize:11,border:`1px solid ${f?.data?C.success+"44":C.border}`}}><div style={{color:C.muted}}>{l}</div><div style={{fontWeight:700,color:f?.data?C.success:C.muted}}>{f?.data?"✓ Uploaded":"– Not uploaded"}</div></div>)}</div>
       <div style={{background:C.warnBg,borderRadius:9,padding:9,fontSize:12,color:C.warn,marginBottom:13}}>⏳ Super admin reviews within 2–3 business days.</div>
       <button className="btn-primary" style={{width:"100%",padding:12,fontSize:14}} onClick={submit}>Submit Application →</button>
     </div>}
@@ -1198,40 +1334,85 @@ function ChefJoinRequestForm({user,onSubmit,onCancel}) {
 
 // ─── Maintenance Admin Panel ──────────────────────────────────────────────────
 function MaintenanceAdminPanel({user,loginKey}) {
-  const [tab,setTab]=useState("proposals");
-  const [proposals,setProposals]=useState(()=>loadProposals().filter(p=>p.status==="pending_review"));
-  const [allProposals,setAllProposals]=useState(loadProposals);
-  const [allBookings,setAllBookings]=useState(loadBookings);
+  const [tab,setTab]=useState("dashboard");
+  const [tick,setTick]=useState(0);
+  const proposals=loadProposals().filter(p=>p.status==="pending_review");
+  const allProposals=loadProposals();
+  const allBookings=loadBookings();
   const [viewProposal,setViewProposal]=useState(null);
   const [editPrice,setEditPrice]=useState("");
   const [rejectReason,setRejectReason]=useState("");
+  const [viewBooking,setViewBooking]=useState(null);
+  const [bookingNote,setBookingNote]=useState("");
+  const [chefFilter,setChefFilter]=useState("");
+  const [bookingFilter,setBookingFilter]=useState("all");
+  const [searchQ,setSearchQ]=useState("");
+  const [toastMsg,setToastMsg]=useState("");
+  const [confirmAction,setConfirmAction]=useState(null);
 
-  const refresh=()=>{
-    setProposals(loadProposals().filter(p=>p.status==="pending_review"));
-    setAllProposals(loadProposals());
-    setAllBookings(loadBookings());
-  };
+  const refresh=()=>setTick(t=>t+1);
+
+  const toast=(msg)=>{setToastMsg(msg);setTimeout(()=>setToastMsg(""),3000);};
+
+  // Auto-refresh every 5s
+  useEffect(()=>{
+    const iv=setInterval(()=>setTick(t=>t+1),5000);
+    return()=>clearInterval(iv);
+  },[]);
 
   const acceptProposal=(proposal,finalPrice)=>{
     const price=Number(finalPrice||proposal.proposedPrice);
     updateProposal(proposal.id,{status:"accepted",finalPrice:price,reviewedAt:new Date().toISOString(),reviewedBy:user?.email});
     updateBooking(proposal.bookingId,{status:"proposal_accepted",proposalId:proposal.id});
-    // Simulate email notification — in-app flag
     const bookings=loadBookings();
     const bk=bookings.find(b=>b.id===proposal.bookingId);
     if(bk){
-      // Store notification for customer
       const notifs=ls.get("cah_notifs",{});
       notifs[bk.customerEmail]=[...(notifs[bk.customerEmail]||[]),{type:"proposal_accepted",bookingId:bk.id,chefAlias:bk.chefAlias,price,at:new Date().toISOString()}];
       ls.set("cah_notifs",notifs);
     }
+    addActivityEvent({type:"proposal_accepted",by:user?.email,proposalId:proposal.id,price});
+    toast("✅ Proposal accepted — customer notified!");
     refresh(); setViewProposal(null);
   };
 
   const rejectProposal=(proposal,reason)=>{
     updateProposal(proposal.id,{status:"rejected",rejectionReason:reason||"",reviewedAt:new Date().toISOString(),reviewedBy:user?.email});
     updateBooking(proposal.bookingId,{status:"proposal_rejected"});
+    addActivityEvent({type:"proposal_rejected",by:user?.email,proposalId:proposal.id,reason});
+    toast("❌ Proposal rejected.");
     refresh(); setViewProposal(null);
+  };
+
+  const cancelBooking=(bk,reason)=>{
+    updateBooking(bk.id,{status:"cancelled",cancelledAt:new Date().toISOString(),cancelledBy:user?.email,cancelReason:reason||""});
+    addActivityEvent({type:"booking_cancelled",by:user?.email,bookingId:bk.id,reason});
+    toast("Booking cancelled.");
+    refresh(); setViewBooking(null);
+  };
+
+  const addNoteToBooking=(bk,note)=>{
+    if(!note.trim()) return;
+    const notes=bk.adminNotes||[];
+    updateBooking(bk.id,{adminNotes:[...notes,{note,by:user?.email,at:new Date().toISOString()}]});
+    addActivityEvent({type:"booking_note",by:user?.email,bookingId:bk.id});
+    toast("Note added!");
+    setBookingNote("");
+    refresh();
+  };
+
+  const markBookingComplete=(bk)=>{
+    updateBooking(bk.id,{status:"completed",completedAt:new Date().toISOString(),completedBy:user?.email});
+    addActivityEvent({type:"booking_completed",by:user?.email,bookingId:bk.id});
+    toast("✅ Booking marked complete!");
+    refresh(); setViewBooking(null);
+  };
+
+  const markBookingConfirmed=(bk)=>{
+    updateBooking(bk.id,{status:"confirmed",confirmedAt:new Date().toISOString(),confirmedBy:user?.email});
+    addActivityEvent({type:"booking_confirmed",by:user?.email,bookingId:bk.id});
+    toast("✅ Booking confirmed!");
+    refresh(); setViewBooking(null);
   };
 
   const ProposalModal=()=>{
@@ -1292,15 +1473,91 @@ function MaintenanceAdminPanel({user,loginKey}) {
     );
   };
 
+  // ── Stats ──
+  const pendingProposals=proposals.length;
+  const totalRevenue=allBookings.reduce((s,b)=>s+(b.amount||0),0);
+  const confirmedCount=allBookings.filter(b=>b.status==="confirmed"||b.status==="completed").length;
+  const cancelledCount=allBookings.filter(b=>b.status==="cancelled").length;
+  const filteredBookings=allBookings.filter(b=>{
+    const matchStatus=bookingFilter==="all"||b.status===bookingFilter;
+    const matchSearch=!searchQ||(b.customerName||"").toLowerCase().includes(searchQ.toLowerCase())||(b.customerEmail||"").toLowerCase().includes(searchQ.toLowerCase())||(b.chefAlias||"").toLowerCase().includes(searchQ.toLowerCase())||(b.id||"").toLowerCase().includes(searchQ.toLowerCase());
+    return matchStatus&&matchSearch;
+  });
+
+  const BookingModal=()=>{
+    if(!viewBooking) return null;
+    const bk=viewBooking;
+    const bkProposal=allProposals.find(p=>p.bookingId===bk.id);
+    return(
+      <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setViewBooking(null)}>
+        <div className="modal-wide">
+          <CloseBtn onClick={()=>setViewBooking(null)}/>
+          <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16}}>
+            <span className="maint-admin-badge">Booking Detail</span>
+            <h2 style={{fontFamily:F.heading,fontSize:19}}>#{bk.id}</h2>
+            <BookingStatusBadge status={bk.status}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:14}}>
+            {[["Customer",bk.customerName||"—"],["Email",bk.customerEmail||"—"],["Phone",bk.customerPhone||"—"],["Chef",bk.chefAlias||"—"],["Date",bk.date||"—"],["Time",bk.time||"—"],["Guests",bk.guests||"—"],["Package",bk.package==="all-inclusive"?"All Inclusive":"Cook-at-Home"],["Amount",bk.amount?fmtLKR(bk.amount):"TBD"],["Occasion",bk.occasion||"—"]].map(([k,v])=>(
+              <div key={k} style={{background:C.surface,borderRadius:7,padding:"7px 11px"}}><div style={{fontSize:10,color:C.muted}}>{k}</div><div style={{fontWeight:600,fontSize:13}}>{v}</div></div>
+            ))}
+          </div>
+          {bk.address&&<div style={{background:C.surface,borderRadius:8,padding:"8px 12px",fontSize:12,marginBottom:10}}>📍 {bk.address}</div>}
+          {bk.specialRequests&&<div style={{background:C.warnBg,borderRadius:8,padding:"8px 12px",fontSize:12,color:C.warn,marginBottom:10}}>📝 Special: {bk.specialRequests}</div>}
+          {bkProposal&&<div style={{background:C.infoBg,borderRadius:9,padding:"9px 13px",marginBottom:12,fontSize:12,color:C.info}}>
+            📋 Proposal: {bkProposal.status} · Price: {fmtLKR(bkProposal.finalPrice||bkProposal.proposedPrice)} · {(bkProposal.menuItems||[]).length} dishes
+          </div>}
+          {/* Admin Notes */}
+          <div style={{marginBottom:13}}>
+            <div style={{fontWeight:700,fontSize:12,color:C.muted,marginBottom:7}}>ADMIN NOTES</div>
+            {(bk.adminNotes||[]).length===0&&<div style={{fontSize:12,color:C.muted,marginBottom:7}}>No notes yet.</div>}
+            {(bk.adminNotes||[]).map((n,i)=><div key={i} style={{background:C.surface,borderRadius:7,padding:"6px 10px",fontSize:12,marginBottom:5}}><span style={{fontWeight:600}}>{n.by}</span> · {new Date(n.at).toLocaleString()}<br/>{n.note}</div>)}
+            <div style={{display:"flex",gap:8,marginTop:7}}>
+              <input className="input" placeholder="Add a note..." value={bookingNote} onChange={e=>setBookingNote(e.target.value)} style={{flex:1,fontSize:12}}/>
+              <button onClick={()=>addNoteToBooking(bk,bookingNote)} style={{background:C.info,color:"white",padding:"8px 14px",borderRadius:7,fontWeight:600,fontSize:12,border:"none"}}>Add</button>
+            </div>
+          </div>
+          {/* Actions */}
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {bk.status==="proposal_accepted"&&<button onClick={()=>markBookingConfirmed(bk)} style={{flex:1,padding:10,background:C.success,color:"white",border:"none",borderRadius:8,fontWeight:700,fontSize:13}}>✓ Mark Confirmed</button>}
+            {(bk.status==="confirmed")&&<button onClick={()=>markBookingComplete(bk)} style={{flex:1,padding:10,background:C.info,color:"white",border:"none",borderRadius:8,fontWeight:700,fontSize:13}}>✅ Mark Complete</button>}
+            {!["cancelled","completed"].includes(bk.status)&&<button onClick={()=>setConfirmAction({label:"Cancel this booking?",action:()=>cancelBooking(bk,"")})} style={{flex:1,padding:10,background:C.dangerBg,color:C.danger,border:"none",borderRadius:8,fontWeight:700,fontSize:13}}>✗ Cancel Booking</button>}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const ConfirmModal=()=>{
+    if(!confirmAction) return null;
+    return(
+      <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setConfirmAction(null)}>
+        <div className="modal" style={{maxWidth:380}}>
+          <h3 style={{fontFamily:F.heading,fontSize:18,marginBottom:12}}>{confirmAction.label}</h3>
+          <p style={{color:C.muted,fontSize:13,marginBottom:20}}>This action cannot be undone.</p>
+          <div style={{display:"flex",gap:9}}>
+            <button onClick={()=>setConfirmAction(null)} style={{flex:1,padding:10,background:C.surface,color:C.muted,border:`1px solid ${C.border}`,borderRadius:8,fontWeight:600}}>Cancel</button>
+            <button onClick={()=>{confirmAction.action();setConfirmAction(null);}} style={{flex:1,padding:10,background:C.danger,color:"white",border:"none",borderRadius:8,fontWeight:700}}>Confirm</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return(
     <div style={{display:"flex",minHeight:"calc(100vh - 64px)"}}>
       <ProposalModal/>
+      <BookingModal/>
+      <ConfirmModal/>
+      {/* Toast */}
+      {toastMsg&&<div style={{position:"fixed",bottom:28,right:28,background:C.dark,color:"white",padding:"11px 20px",borderRadius:10,fontSize:14,fontWeight:600,zIndex:9999,boxShadow:"0 4px 20px rgba(0,0,0,.3)"}}>{toastMsg}</div>}
+      {/* Sidebar */}
       <div style={{width:230,background:"#0C1A2E",padding:"22px 11px",flexShrink:0}}>
         <div style={{padding:"0 7px 18px",borderBottom:"1px solid rgba(255,255,255,.08)",marginBottom:13}}>
           <div style={{fontFamily:F.heading,fontSize:15,color:"white",fontWeight:700}}>🔧 Maintenance Admin</div>
           <div style={{color:"rgba(255,255,255,.4)",fontSize:11,marginTop:2}}>{user?.email}</div>
         </div>
-        {[["proposals","📋","Proposals",proposals.length],["all-proposals","🗂","All Proposals"],["bookings","📅","All Bookings"],["chefs","👨‍🍳","Chef Overview"]].map(([id,ic,l,cnt])=>(
+        {[["dashboard","📊","Dashboard"],["proposals","📋","Proposals",pendingProposals],["all-proposals","🗂","All Proposals"],["bookings","📅","Bookings"],["chefs","👨‍🍳","Chef Overview"],["activity","🕐","Activity Log"]].map(([id,ic,l,cnt])=>(
           <div key={id} className={`sidebar-link ${tab===id?"active":""}`} onClick={()=>{setTab(id);refresh();}} style={{position:"relative"}}>
             <span>{ic}</span><span>{l}</span>
             {cnt>0&&<span style={{marginLeft:"auto",background:C.danger,color:"white",borderRadius:10,fontSize:10,fontWeight:700,padding:"2px 6px"}}>{cnt}</span>}
@@ -1308,34 +1565,81 @@ function MaintenanceAdminPanel({user,loginKey}) {
         ))}
       </div>
 
-      <div style={{flex:1,padding:28,background:C.surface,overflowY:"auto"}} key={`maint-${loginKey}`}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
-          <div><h2 style={{fontFamily:F.heading,fontSize:22}}>Maintenance Admin Panel</h2><p style={{color:C.muted,fontSize:13}}>Review chef proposals and manage bookings</p></div>
-          <button onClick={refresh} style={{background:"white",border:`1px solid ${C.border}`,borderRadius:8,padding:"7px 14px",fontSize:13,cursor:"pointer"}}>🔄 Refresh</button>
-        </div>
+      {/* Main Content */}
+      <div style={{flex:1,padding:28,background:C.surface,overflowY:"auto"}} key={`maint-${loginKey}-${tick}`}>
 
-        {tab==="proposals"&&(
-          <div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:13,marginBottom:22}}>
-              <MetricCard label="Pending Review" value={proposals.length} color={C.warn}/>
-              <MetricCard label="Accepted Today" value={allProposals.filter(p=>p.status==="accepted"&&new Date(p.reviewedAt||0).toDateString()===new Date().toDateString()).length} color={C.success}/>
-              <MetricCard label="Total Reviewed" value={allProposals.filter(p=>p.status!=="pending_review").length} color={C.info}/>
+        {/* ── Dashboard ── */}
+        {tab==="dashboard"&&(
+          <div className="fade-up">
+            <h2 style={{fontFamily:F.heading,fontSize:22,marginBottom:4}}>Maintenance Dashboard</h2>
+            <p style={{color:C.muted,fontSize:13,marginBottom:22}}>Real-time overview of bookings, proposals and chef activity.</p>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:24}}>
+              {[["Pending Proposals",pendingProposals,C.warn,"📋"],["Total Bookings",allBookings.length,C.info,"📅"],["Confirmed",confirmedCount,C.success,"✅"],["Cancelled",cancelledCount,C.danger,"❌"]].map(([l,v,c,ic])=>(
+                <div key={l} style={{background:"white",borderRadius:13,border:`1px solid ${C.border}`,padding:"16px 18px"}}>
+                  <div style={{fontSize:22,marginBottom:5}}>{ic}</div>
+                  <div style={{fontFamily:F.heading,fontSize:26,fontWeight:700,color:c}}>{v}</div>
+                  <div style={{fontSize:12,color:C.muted,marginTop:3}}>{l}</div>
+                </div>
+              ))}
             </div>
-            <h3 style={{fontFamily:F.heading,fontSize:18,marginBottom:14}}>Pending Proposals</h3>
-            {proposals.length===0?(
-              <div style={{textAlign:"center",padding:48,background:"white",borderRadius:11,border:`1px solid ${C.border}`}}><div style={{fontSize:36,marginBottom:10}}>✅</div><p style={{color:C.muted}}>No proposals pending review.</p></div>
-            ):proposals.map(p=>{
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+              {/* Recent Pending Proposals */}
+              <div style={{background:"white",borderRadius:13,border:`1px solid ${C.border}`,padding:18}}>
+                <div style={{fontWeight:700,fontSize:14,marginBottom:13}}>⏳ Pending Proposals</div>
+                {proposals.length===0?<EmptyState icon="✅" text="All caught up!"/>:proposals.slice(0,4).map(p=>(
+                  <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:`1px solid ${C.border}`}}>
+                    <div>
+                      <div style={{fontWeight:600,fontSize:13}}>{p.chefAlias}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{new Date(p.submittedAt).toLocaleDateString()}</div>
+                    </div>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <span style={{fontWeight:700,color:C.primary,fontSize:13}}>{fmtLKR(p.proposedPrice)}</span>
+                      <button onClick={()=>{setViewProposal(p);setEditPrice("");}} style={{background:C.primaryLight,color:C.primary,padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:600,border:"none"}}>Review</button>
+                    </div>
+                  </div>
+                ))}
+                {proposals.length>4&&<div style={{fontSize:12,color:C.muted,marginTop:8}}>{proposals.length-4} more pending...</div>}
+              </div>
+              {/* Recent Bookings */}
+              <div style={{background:"white",borderRadius:13,border:`1px solid ${C.border}`,padding:18}}>
+                <div style={{fontWeight:700,fontSize:14,marginBottom:13}}>📅 Recent Bookings</div>
+                {allBookings.length===0?<EmptyState icon="📅" text="No bookings yet."/>:allBookings.slice().reverse().slice(0,5).map(b=>(
+                  <div key={b.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.border}`,cursor:"pointer"}} onClick={()=>setViewBooking(b)}>
+                    <div>
+                      <div style={{fontWeight:600,fontSize:13}}>{b.customerName||b.customerEmail}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{b.chefAlias} · {b.date||"—"}</div>
+                    </div>
+                    <BookingStatusBadge status={b.status}/>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Revenue summary */}
+            <div style={{background:"white",borderRadius:13,border:`1px solid ${C.border}`,padding:18,marginTop:16}}>
+              <div style={{fontWeight:700,fontSize:14,marginBottom:4}}>💰 Total Revenue Processed</div>
+              <div style={{fontFamily:F.heading,fontSize:28,fontWeight:700,color:C.success}}>{fmtLKR(totalRevenue)}</div>
+              <div style={{fontSize:12,color:C.muted,marginTop:3}}>Across {allBookings.filter(b=>b.amount).length} paid bookings</div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Pending Proposals ── */}
+        {tab==="proposals"&&(
+          <div className="fade-up">
+            <h3 style={{fontFamily:F.heading,fontSize:20,marginBottom:4}}>Pending Proposals</h3>
+            <p style={{color:C.muted,fontSize:13,marginBottom:18}}>Review and approve or reject chef proposals before customers see them.</p>
+            {proposals.length===0?<EmptyState icon="✅" text="No pending proposals. All caught up!"/>:proposals.map(p=>{
               const bk=allBookings.find(b=>b.id===p.bookingId)||{};
               return(
-                <div key={p.id} style={{background:"white",borderRadius:12,border:`2px solid ${C.warn}44`,padding:20,marginBottom:14}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                <div key={p.id} style={{background:"white",borderRadius:13,border:`1px solid ${C.border}`,padding:18,marginBottom:12}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:11}}>
                     <div>
-                      <div style={{fontWeight:700,fontSize:15}}>{p.chefAlias} → {bk.customerName||p.customerEmail}</div>
-                      <div style={{fontSize:12,color:C.muted}}>{bk.date} · {bk.guests} guests · {bk.package==="all-inclusive"?"All Inclusive":"Cook-at-Home"}</div>
+                      <div style={{fontWeight:700,fontSize:15,marginBottom:2}}>{p.chefAlias}</div>
+                      <div style={{fontSize:12,color:C.muted}}>Customer: {bk.customerName||p.customerEmail} · {bk.date||"—"} · {bk.guests||"—"} guests</div>
                       <div style={{fontSize:11,color:C.muted}}>Submitted: {new Date(p.submittedAt).toLocaleDateString()}</div>
                     </div>
                     <div style={{textAlign:"right"}}>
-                      <div style={{fontFamily:F.heading,fontSize:18,fontWeight:700,color:C.primary}}>{fmtLKR(p.proposedPrice)}</div>
+                      <div style={{fontFamily:F.heading,fontSize:20,fontWeight:700,color:C.primary}}>{fmtLKR(p.proposedPrice)}</div>
                       <div style={{fontSize:11,color:C.muted}}>{(p.menuItems||[]).length} dishes</div>
                     </div>
                   </div>
@@ -1346,7 +1650,7 @@ function MaintenanceAdminPanel({user,loginKey}) {
                   {p.notes&&<div style={{background:C.warnBg,borderRadius:7,padding:"6px 11px",fontSize:12,color:C.warn,marginBottom:11}}>👨‍🍳 {p.notes}</div>}
                   <div style={{display:"flex",gap:8}}>
                     <button onClick={()=>{setViewProposal(p);setEditPrice("");}} style={{background:C.infoBg,color:C.info,padding:"7px 16px",borderRadius:6,fontSize:13,fontWeight:600,border:"none",cursor:"pointer"}}>📄 Full Review</button>
-                    <button onClick={()=>rejectProposal(p,"")} style={{background:C.dangerBg,color:C.danger,padding:"7px 16px",borderRadius:6,fontSize:13,fontWeight:600,border:"none",cursor:"pointer"}}>✗ Reject</button>
+                    <button onClick={()=>setConfirmAction({label:"Reject this proposal?",action:()=>rejectProposal(p,"")})} style={{background:C.dangerBg,color:C.danger,padding:"7px 16px",borderRadius:6,fontSize:13,fontWeight:600,border:"none",cursor:"pointer"}}>✗ Reject</button>
                     <button onClick={()=>acceptProposal(p,"")} style={{background:C.success,color:"white",padding:"7px 16px",borderRadius:6,fontSize:13,fontWeight:600,border:"none",cursor:"pointer"}}>✓ Accept</button>
                   </div>
                 </div>
@@ -1355,9 +1659,10 @@ function MaintenanceAdminPanel({user,loginKey}) {
           </div>
         )}
 
+        {/* ── All Proposals ── */}
         {tab==="all-proposals"&&(
-          <div>
-            <h3 style={{fontFamily:F.heading,fontSize:18,marginBottom:18}}>All Proposals</h3>
+          <div className="fade-up">
+            <h3 style={{fontFamily:F.heading,fontSize:20,marginBottom:18}}>All Proposals</h3>
             {allProposals.length===0?<EmptyState icon="📋" text="No proposals yet."/>:allProposals.slice().reverse().map(p=>{
               const sc={pending_review:{bg:C.warnBg,c:C.warn,l:"Pending"},accepted:{bg:C.successBg,c:C.success,l:"Accepted ✓"},rejected:{bg:C.dangerBg,c:C.danger,l:"Rejected"}}[p.status]||{bg:C.surface,c:C.muted,l:p.status};
               return(
@@ -1365,11 +1670,12 @@ function MaintenanceAdminPanel({user,loginKey}) {
                   <div>
                     <div style={{fontWeight:700,fontSize:14}}>{p.chefAlias}</div>
                     <div style={{fontSize:11,color:C.muted}}>Customer: {p.customerEmail} · {new Date(p.submittedAt).toLocaleDateString()}</div>
-                    <div style={{fontSize:11,color:C.muted}}>{(p.menuItems||[]).length} dishes proposed</div>
+                    <div style={{fontSize:11,color:C.muted}}>{(p.menuItems||[]).length} dishes · {p.reviewedBy?`Reviewed by ${p.reviewedBy}`:""}</div>
                   </div>
                   <div style={{textAlign:"right",display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end"}}>
                     <div style={{fontWeight:700,color:C.primary}}>{fmtLKR(p.finalPrice||p.proposedPrice)}</div>
                     <span style={{background:sc.bg,color:sc.c,padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:600}}>{sc.l}</span>
+                    {p.rejectionReason&&<div style={{fontSize:11,color:C.danger}}>Reason: {p.rejectionReason}</div>}
                   </div>
                 </div>
               );
@@ -1377,40 +1683,211 @@ function MaintenanceAdminPanel({user,loginKey}) {
           </div>
         )}
 
+        {/* ── Bookings ── */}
         {tab==="bookings"&&(
-          <div>
-            <h3 style={{fontFamily:F.heading,fontSize:18,marginBottom:18}}>All Bookings Overview</h3>
-            {allBookings.length===0?<EmptyState icon="📅" text="No bookings yet."/>:allBookings.slice().reverse().map(b=>(
-              <div key={b.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:17,marginBottom:10}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:9}}><div><div style={{fontWeight:700,fontSize:14}}>{b.customerName||b.customerEmail}</div><div style={{fontSize:11,color:C.muted}}>{b.chefAlias} · #{b.id}</div></div><BookingStatusBadge status={b.status}/></div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:9,fontSize:12}}>{[["Date",b.date||"—"],["Guests",b.guests||"—"],["Phone",b.customerPhone||"—"],["Amount",b.amount?fmtLKR(b.amount):"TBD"]].map(([k,v])=><div key={k}><div style={{color:C.muted,fontSize:10}}>{k}</div><div style={{fontWeight:600}}>{v}</div></div>)}</div>
+          <div className="fade-up">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18,flexWrap:"wrap",gap:10}}>
+              <h3 style={{fontFamily:F.heading,fontSize:20}}>All Bookings</h3>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                <input className="input" placeholder="Search name, email, chef, ID..." value={searchQ} onChange={e=>setSearchQ(e.target.value)} style={{width:230,fontSize:13}}/>
+                <select className="input" value={bookingFilter} onChange={e=>setBookingFilter(e.target.value)} style={{width:170,fontSize:13}}>
+                  <option value="all">All Statuses</option>
+                  {Object.entries(STATUS_LABELS).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Showing {filteredBookings.length} of {allBookings.length} bookings</div>
+            {filteredBookings.length===0?<EmptyState icon="📅" text="No bookings match your filter."/>:filteredBookings.slice().reverse().map(b=>(
+              <div key={b.id} onClick={()=>setViewBooking(b)} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:17,marginBottom:10,cursor:"pointer",transition:"box-shadow .2s"}} onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 18px rgba(0,0,0,.09)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:9}}>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:14}}>{b.customerName||b.customerEmail}</div>
+                    <div style={{fontSize:11,color:C.muted}}>{b.chefAlias} · #{b.id}</div>
+                  </div>
+                  <BookingStatusBadge status={b.status}/>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:9,fontSize:12}}>
+                  {[["Date",b.date||"—"],["Guests",b.guests||"—"],["Phone",b.customerPhone||"—"],["Amount",b.amount?fmtLKR(b.amount):"TBD"]].map(([k,v])=><div key={k}><div style={{color:C.muted,fontSize:10}}>{k}</div><div style={{fontWeight:600}}>{v}</div></div>)}
+                </div>
+                {(b.adminNotes||[]).length>0&&<div style={{marginTop:8,fontSize:11,color:C.info}}>🗒 {(b.adminNotes||[]).length} admin note(s)</div>}
               </div>
             ))}
           </div>
         )}
 
+        {/* ── Chef Overview ── */}
         {tab==="chefs"&&(
-          <div>
-            <h3 style={{fontFamily:F.heading,fontSize:18,marginBottom:18}}>Chef Activity</h3>
-            {CHEFS_DATA.map(c=>{
+          <div className="fade-up">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+              <h3 style={{fontFamily:F.heading,fontSize:20}}>Chef Activity Overview</h3>
+              <input className="input" placeholder="Filter by name..." value={chefFilter} onChange={e=>setChefFilter(e.target.value)} style={{width:200,fontSize:13}}/>
+            </div>
+            {getAllChefs().filter(c=>!chefFilter||(c.alias||"").toLowerCase().includes(chefFilter.toLowerCase())).map((c,idx)=>{
               const chefBookings=allBookings.filter(b=>b.chefAlias===c.alias);
               const chefProposals=allProposals.filter(p=>p.chefAlias===c.alias);
+              const accepted=chefProposals.filter(p=>p.status==="accepted").length;
+              const revenue=chefBookings.reduce((s,b)=>s+(b.amount||0),0);
+              const displayId=c.displayId||getStaticChefDisplayId(idx);
+              const isSuspended=loadSuspendedChefs().some(s=>s.id===c.id);
               return(
-                <div key={c.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:18,marginBottom:10,display:"flex",alignItems:"center",gap:14,justifyContent:"space-between"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:11}}>
-                    <Avatar initials={c.image} size={38} color={c.type==="premium"?"#B45309":C.primary}/>
-                    <div><div style={{fontWeight:600,fontSize:14}}>{c.alias}</div><div style={{fontSize:12,color:C.muted}}>{c.location} · {c.type==="premium"?"Premium":"Standard"}</div></div>
+                <div key={c.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:18,marginBottom:10}}>
+                  <div style={{display:"flex",alignItems:"center",gap:14,justifyContent:"space-between",flexWrap:"wrap"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:11}}>
+                      <div style={{background:C.dark,color:"white",borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:800,fontFamily:"monospace"}}>{displayId}</div>
+                      <Avatar initials={c.image||c.alias?.slice(0,2)} size={38} color={c.type==="premium"?"#B45309":C.primary}/>
+                      <div>
+                        <div style={{fontWeight:600,fontSize:14}}>{c.alias}
+                          {isSuspended&&<span style={{marginLeft:7,background:C.dangerBg,color:C.danger,padding:"1px 7px",borderRadius:10,fontSize:10,fontWeight:700}}>SUSPENDED</span>}
+                          {c.isDynamic&&<span style={{marginLeft:7,background:C.successBg,color:C.success,padding:"1px 7px",borderRadius:10,fontSize:10,fontWeight:700}}>NEW</span>}
+                        </div>
+                        <div style={{fontSize:12,color:C.muted}}>{c.location} · {c.type==="premium"?"Premium":"Standard"}</div>
+                      </div>
+                    </div>
+                    <div style={{display:"flex",gap:20,flexWrap:"wrap"}}>
+                      {[["Bookings",chefBookings.length,C.primary],["Proposals",chefProposals.length,C.info],["Accepted",accepted,C.success],["Revenue",fmtLKR(revenue),C.warn]].map(([l,v,c2])=>(
+                        <div key={l} style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>{l}</div><div style={{fontWeight:700,color:c2,fontSize:l==="Revenue"?12:16}}>{v}</div></div>
+                      ))}
+                    </div>
                   </div>
-                  <div style={{display:"flex",gap:18}}>
-                    <div style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Bookings</div><div style={{fontWeight:700,color:C.primary}}>{chefBookings.length}</div></div>
-                    <div style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Proposals</div><div style={{fontWeight:700,color:C.info}}>{chefProposals.length}</div></div>
-                    <div style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Accepted</div><div style={{fontWeight:700,color:C.success}}>{chefProposals.filter(p=>p.status==="accepted").length}</div></div>
-                  </div>
+                  {chefBookings.length>0&&<div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.border}`,display:"flex",gap:7,flexWrap:"wrap"}}>
+                    {chefBookings.slice(-3).reverse().map(b=>(
+                      <div key={b.id} onClick={()=>setViewBooking(b)} style={{background:C.surface,borderRadius:7,padding:"5px 10px",fontSize:11,cursor:"pointer",border:`1px solid ${C.border}`}}>
+                        {b.customerName||b.customerEmail?.split("@")[0]} · {b.date||"—"} · <BookingStatusBadge status={b.status}/>
+                      </div>
+                    ))}
+                  </div>}
                 </div>
               );
             })}
           </div>
         )}
+
+        {/* ── Activity Log ── */}
+        {tab==="activity"&&(
+          <div className="fade-up">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+              <h3 style={{fontFamily:F.heading,fontSize:20}}>Activity Log</h3>
+              <button onClick={refresh} style={{background:C.surface,border:`1px solid ${C.border}`,padding:"7px 14px",borderRadius:7,fontSize:13,fontWeight:600,cursor:"pointer"}}>🔄 Refresh</button>
+            </div>
+            {loadActivityLog().length===0?<EmptyState icon="🕐" text="No activity yet."/>:loadActivityLog().slice().reverse().map((ev,i)=>{
+              const icons={proposal_accepted:"✅",proposal_rejected:"❌",booking_cancelled:"🚫",booking_note:"🗒",booking_completed:"✅",booking_confirmed:"📌"};
+              const labels={proposal_accepted:"Proposal Accepted",proposal_rejected:"Proposal Rejected",booking_cancelled:"Booking Cancelled",booking_note:"Note Added",booking_completed:"Booking Completed",booking_confirmed:"Booking Confirmed"};
+              return(
+                <div key={i} style={{background:"white",borderRadius:9,border:`1px solid ${C.border}`,padding:"10px 14px",marginBottom:7,display:"flex",gap:12,alignItems:"center"}}>
+                  <span style={{fontSize:18}}>{icons[ev.type]||"🔧"}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600,fontSize:13}}>{labels[ev.type]||ev.type}</div>
+                    <div style={{fontSize:11,color:C.muted}}>By {ev.by} · {new Date(ev.at).toLocaleString()}</div>
+                  </div>
+                  {ev.price&&<div style={{fontWeight:700,color:C.primary,fontSize:13}}>{fmtLKR(ev.price)}</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+// ─── Maintenance Admin Manager (whitelist-only) ───────────────────────────────
+function MaintAdminManager({setUserRole,removeUserRole,allUsers}) {
+  const [emails,setEmails]=useState(loadMaintAdminEmails);
+  const [input,setInput]=useState("");
+  const [error,setError]=useState("");
+  const [toast,setToast]=useState("");
+  const [sbLoading,setSbLoading]=useState(true);
+
+  const showToast=(msg)=>{setToast(msg);setTimeout(()=>setToast(""),3000);};
+
+  useEffect(()=>{
+    sbLoadMaintAdminEmails().then(e=>{setEmails(e);setSbLoading(false);}).catch(()=>setSbLoading(false));
+  },[]);
+
+  const addEmail=async()=>{
+    const email=input.trim().toLowerCase();
+    if(!email){setError("Enter an email address.");return;}
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){setError("Enter a valid email address.");return;}
+    if(emails.map(e=>e.toLowerCase()).includes(email)){setError("This email is already in the list.");return;}
+    setError("");
+    await sbAddMaintAdminEmail(email);
+    const updated=await sbLoadMaintAdminEmails();
+    setEmails(updated);
+    setUserRole(email,"maintenance_admin");
+    setInput("");
+    showToast("✅ Added! When this email logs in or signs up, they get Maintenance Admin access.");
+  };
+
+  const removeEmail=async(email)=>{
+    await sbRemoveMaintAdminEmail(email);
+    const updated=await sbLoadMaintAdminEmails();
+    setEmails(updated);
+    removeUserRole(email);
+    showToast("Removed from whitelist. Access revoked.");
+  };
+
+  const matchedUser=(email)=>allUsers.find(u=>u.email.toLowerCase()===email.toLowerCase());
+
+  return(
+    <div>
+      {toast&&<div style={{position:"fixed",bottom:28,right:28,background:C.dark,color:"white",padding:"11px 20px",borderRadius:10,fontSize:14,fontWeight:600,zIndex:9999,boxShadow:"0 4px 20px rgba(0,0,0,.3)"}}>{toast}</div>}
+      <h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:6}}>Maintenance Admins</h2>
+      <p style={{color:C.muted,marginBottom:16,fontSize:13}}>Add any email address below (Gmail, .lk, or any domain). When that person logs in or signs up, they automatically get Maintenance Admin access. This is the only way to grant M.Admin access.</p>
+      <div style={{background:C.infoBg,borderRadius:10,padding:"11px 16px",marginBottom:20,fontSize:13,color:C.info}}>
+        ℹ️ Maintenance admins can: review proposals, accept/reject, adjust prices, view bookings and activity. They cannot manage users, settings, or chef applications.
+      </div>
+      {/* Add email input */}
+      <div style={{background:"white",borderRadius:12,border:`1px solid ${C.border}`,padding:20,marginBottom:20}}>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:12}}>➕ Add Maintenance Admin by Email</div>
+        <div style={{display:"flex",gap:9}}>
+          <input
+            className={`input${error?" error":""}`}
+            placeholder="e.g. admin@gmail.com or admin@company.lk"
+            value={input}
+            onChange={e=>{setInput(e.target.value);setError("");}}
+            onKeyDown={e=>e.key==="Enter"&&addEmail()}
+            style={{flex:1}}
+          />
+          <button onClick={addEmail} style={{background:C.primary,color:"white",padding:"10px 20px",borderRadius:8,fontWeight:700,fontSize:14,border:"none",whiteSpace:"nowrap"}}>Add →</button>
+        </div>
+        {error&&<div style={{color:C.danger,fontSize:12,marginTop:6}}>{error}</div>}
+        <div style={{fontSize:12,color:C.muted,marginTop:7}}>💡 Any email works — Gmail, .lk, or any domain. When they sign up or log in, they automatically get Maintenance Admin access.</div>
+      </div>
+      {/* Whitelist */}
+      <div style={{background:"white",borderRadius:12,border:`1px solid ${C.border}`,padding:18}}>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:12}}>🔧 Authorised Maintenance Admin Emails ({emails.length})</div>
+        {emails.length===0
+          ? <div style={{textAlign:"center",padding:"28px 0",color:C.muted}}>
+              <div style={{fontSize:32,marginBottom:8}}>📭</div>
+              <div style={{fontSize:13}}>No maintenance admin emails added yet.</div>
+              <div style={{fontSize:12,marginTop:4}}>Add a Gmail address above to get started.</div>
+            </div>
+          : emails.map(email=>{
+            const u=matchedUser(email);
+            const hasAccount=!!u;
+            return(
+              <div key={email} style={{background:"#E0F2FE",borderRadius:9,border:"1px solid #BAE6FD",padding:"13px 16px",marginBottom:9,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:11}}>
+                  <div style={{width:38,height:38,borderRadius:"50%",background:"#0369A1",display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontWeight:700,fontSize:15}}>
+                    {(u?.name||email)[0].toUpperCase()}
+                  </div>
+                  <div>
+                    {u?.name&&<div style={{fontWeight:600,fontSize:13}}>{u.name}</div>}
+                    <div style={{fontSize:12,color:"#0369A1"}}>{email}</div>
+                    <div style={{fontSize:11,marginTop:2}}>
+                      {hasAccount
+                        ? <span style={{background:C.successBg,color:C.success,padding:"1px 7px",borderRadius:10,fontWeight:700}}>✓ Account exists · Active M.Admin</span>
+                        : <span style={{background:C.warnBg,color:C.warn,padding:"1px 7px",borderRadius:10,fontWeight:700}}>⏳ No account yet — access granted on signup</span>
+                      }
+                    </div>
+                  </div>
+                </div>
+                <button onClick={()=>removeEmail(email)} style={{background:C.dangerBg,color:C.danger,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:700,border:"none",cursor:"pointer",whiteSpace:"nowrap"}}>🗑 Remove</button>
+              </div>
+            );
+          })
+        }
       </div>
     </div>
   );
@@ -1421,7 +1898,7 @@ function SuperAdminPanel({loginKey}) {
   const {setRole}=useAuth();
   const [tab,setTab]=useState("dashboard");
   const [settings,setSettings]=useState(loadSettings);
-  const [pendingApps,setPendingApps]=useState(()=>loadApps().filter(a=>a.status==="pending"));
+  const [tick,setTick]=useState(0); const pendingApps=loadApps().filter(a=>a.status==="pending"); const setPendingApps=()=>setTick(t=>t+1);
   const [feeSugs,setFeeSugs]=useState(()=>loadFeeSugs().filter(s=>s.status==="pending"));
   const [allBookings,setAllBookings]=useState(loadBookings);
   const [allProposals,setAllProposals]=useState(loadProposals);
@@ -1430,6 +1907,11 @@ function SuperAdminPanel({loginKey}) {
   const [editFee,setEditFee]=useState(null);
   const [feeForm,setFeeForm]=useState({startingFrom:25000,extraPerGuest:2000});
   const [removedChefIds,setRemovedChefIds]=useState(()=>ls.get("cah_removed_chefs",[]));
+  const [suspendedChefs,setSuspendedChefs]=useState(loadSuspendedChefs);
+  const [suspendTarget,setSuspendTarget]=useState(null);
+  const [suspendReason,setSuspendReason]=useState("");
+  const [chefHistoryLog,setChefHistoryLog]=useState(loadChefHistory);
+  const [expandedChef,setExpandedChef]=useState(null);
   const [userRoles,setUserRoles]=useState(()=>{const r={};loadUsers().forEach(u=>{if(u.role)r[u.email]=u.role;});return r;});
 
   const loadAllUsers=()=>{
@@ -1449,7 +1931,32 @@ function SuperAdminPanel({loginKey}) {
     const r={};loadUsers().forEach(u=>{if(u.role)r[u.email]=u.role;});
     setUserRoles(r);
     setRemovedChefIds(ls.get("cah_removed_chefs",[]));
+    setSuspendedChefs(loadSuspendedChefs());
+    setChefHistoryLog(loadChefHistory());
   };
+
+  useEffect(()=>{
+    const doRefresh=()=>{
+      setAllBookings(loadBookings());
+      setAllProposals(loadProposals());
+      const apps=loadApps();
+      setPendingApps(apps.filter(a=>a.status==="pending"));
+      setFeeSugs(loadFeeSugs().filter(s=>s.status==="pending"));
+      setChefFeeMap(loadChefFees());
+      const stored=loadUsers();
+      setAllUsers([...stored]);
+      const r={};stored.forEach(u=>{if(u.role)r[u.email]=u.role;});
+      setUserRoles(r);
+      setRemovedChefIds(ls.get("cah_removed_chefs",[]));
+      setSuspendedChefs(loadSuspendedChefs());
+      setChefHistoryLog(loadChefHistory());
+    };
+    const interval=setInterval(doRefresh,3000);
+    // Listen for storage writes from any tab (login, signup, role changes)
+    const onStorage=(e)=>{if(!e||!e.key||[K.apps,K.users,K.bookings,K.proposals,"cah_dynamic_chefs"].includes(e.key)||e.key===null)doRefresh();};
+    window.addEventListener("storage",onStorage);
+    return()=>{clearInterval(interval);window.removeEventListener("storage",onStorage);};
+  },[]);
 
   const removeUserRole=(email)=>{
     setRole(email,"customer");
@@ -1459,16 +1966,25 @@ function SuperAdminPanel({loginKey}) {
     if(i>=0){users[i].role="customer";saveUsers(users);}
     setAllUsers(loadAllUsers());
   };
-  const removeChef=(chefId,chefAlias)=>{
-    if(!window.confirm(`Remove ${chefAlias} from the chef list? They will no longer appear on the platform.`)) return;
-    const updated=[...removedChefIds,chefId];
-    ls.set("cah_removed_chefs",updated);
-    setRemovedChefIds(updated);
-    // Also demote any user with that alias
-    const users=loadUsers();
-    const i=users.findIndex(u=>u.name===chefAlias||u.email===chefAlias);
-    if(i>=0){users[i].role="customer";saveUsers(users);}
-    setAllUsers(loadAllUsers());
+  const confirmSuspend=()=>{
+    if(!suspendTarget) return;
+    const {id:chefId,alias:chefAlias}=suspendTarget;
+    const reason=suspendReason.trim()||"No reason provided";
+    const updated=[...loadSuspendedChefs(),{id:chefId,alias:chefAlias,suspendedAt:new Date().toISOString(),reason}];
+    saveSuspendedChefs(updated);
+    setSuspendedChefs(updated);
+    addChefHistoryEvent({chefId,chefAlias,action:"suspended",reason});
+    window.dispatchEvent(new StorageEvent("storage",{key:K.suspendedChefs}));
+    setSuspendTarget(null);setSuspendReason("");
+    refresh();
+  };
+  const reactivateChef=(chefId,chefAlias)=>{
+    const updated=loadSuspendedChefs().filter(s=>s.id!==chefId);
+    saveSuspendedChefs(updated);
+    setSuspendedChefs(updated);
+    addChefHistoryEvent({chefId,chefAlias,action:"reactivated",reason:"Reactivated by super admin"});
+    window.dispatchEvent(new StorageEvent("storage",{key:K.suspendedChefs}));
+    refresh();
   };
   const setUserRole=(email,newRole)=>{
     setRole(email,newRole);
@@ -1479,17 +1995,87 @@ function SuperAdminPanel({loginKey}) {
     setAllUsers(loadAllUsers());
   };
 
-  const approveApp=(id)=>{const apps=loadApps();const i=apps.findIndex(a=>a.id===id);if(i>=0){apps[i].status="approved";saveApps(apps);setRole(apps[i].email,"chef");}setPendingApps(p=>p.filter(a=>a.id!==id));setViewApp(null);};
+  const approveApp=(id)=>{
+    const apps=loadApps();
+    const i=apps.findIndex(a=>a.id===id);
+    if(i>=0){
+      apps[i].status="approved";
+      saveApps(apps);
+      setRole(apps[i].email,"chef");
+      // Create a dynamic chef profile so they appear in the public chef listing
+      const app=apps[i];
+      const specialties=(app.specialties||"").split(",").map(s=>s.trim()).filter(Boolean);
+      const initials=app.fullName.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase()||"CH";
+      const newId=`dyn_${app.id}`;
+      const displayId=getNextChefDisplayId();
+      const chefProfile={
+        id:newId, alias:app.fullName, email:app.email,
+        displayId,
+        type:app.chefType||"standard",
+        rating:0, reviews:0, experience:app.experience||"",
+        location:app.city||app.district||"Sri Lanka",
+        specialties:specialties.length?specialties:["Sri Lankan"],
+        image:initials, dinners:0,
+        badge:app.chefType==="premium"?"Premium":"Verified",
+        bio:app.bio||"Verified Chef on ChefAtHome.",
+        menus:specialties.slice(0,3).map(s=>`${s} Speciality`)||["Custom Menu"],
+        startingFrom:Number(app.suggestAllIn)||0,
+        isDynamic:true, approvedAt:new Date().toISOString(),
+      };
+      addDynamicChef(chefProfile);
+    }
+    setPendingApps(p=>p.filter(a=>a.id!==id));
+    setViewApp(null);
+    refresh();
+  };
   const rejectApp=(id)=>{const apps=loadApps();const i=apps.findIndex(a=>a.id===id);if(i>=0){apps[i].status="rejected";saveApps(apps);}setPendingApps(p=>p.filter(a=>a.id!==id));setViewApp(null);};
   const setChefStarting=(chefId,data)=>{const fees=loadChefFees();fees[chefId]={...fees[chefId],...data};saveChefFees(fees);setChefFeeMap({...fees});setEditFee(null);};
-  const approveSug=(sug)=>{const chef=CHEFS_DATA.find(c=>c.alias===sug.chefAlias);if(chef){const fees=loadChefFees();fees[chef.id]={...fees[chef.id],startingFrom:sug.suggestAllIn,cookStartingFrom:sug.suggestCook};saveChefFees(fees);}const all=loadFeeSugs().map(s=>s.id===sug.id?{...s,status:"approved"}:s);saveFeeSugs(all);setFeeSugs(p=>p.filter(s=>s.id!==sug.id));};
+  const approveSug=(sug)=>{const chef=getAllChefs().find(c=>c.alias===sug.chefAlias);if(chef){const fees=loadChefFees();fees[chef.id]={...fees[chef.id],startingFrom:sug.suggestAllIn,cookStartingFrom:sug.suggestCook};saveChefFees(fees);}const all=loadFeeSugs().map(s=>s.id===sug.id?{...s,status:"approved"}:s);saveFeeSugs(all);setFeeSugs(p=>p.filter(s=>s.id!==sug.id));};
 
   const totalRevenue=allBookings.reduce((s,b)=>s+(b.amount||0),0);
   const allCustomers=[...new Set(allBookings.map(b=>b.customerEmail))];
 
-  const AppModal=()=>{
-    if(!viewApp) return null;
-    return (
+  // SuspendModal rendered inline (not as inner component) to prevent re-mount on every keystroke
+  const suspendModalJSX = suspendTarget ? (
+    <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget){setSuspendTarget(null);setSuspendReason("");}}}>
+      <div className="modal">
+        <CloseBtn onClick={()=>{setSuspendTarget(null);setSuspendReason("");}}/>
+        <div style={{fontSize:36,textAlign:"center",marginBottom:12}}>🚫</div>
+        <h2 style={{fontFamily:F.heading,fontSize:19,marginBottom:4,textAlign:"center"}}>Suspend Chef</h2>
+        <p style={{color:C.muted,fontSize:13,textAlign:"center",marginBottom:16}}>
+          <strong>{suspendTarget.alias}</strong> ({suspendTarget.displayId}) will be hidden from the platform. Their data is preserved and they can be re-activated at any time.
+        </p>
+        <div style={{background:C.warnBg,borderRadius:9,padding:"10px 13px",marginBottom:14,fontSize:12,color:C.warn}}>
+          ⚠️ The chef will no longer appear in public listings or accept new bookings while suspended.
+        </div>
+        <label className="label">Reason for Suspension <span className="req">*</span></label>
+        <textarea className="input" rows={3} placeholder="e.g. Complaint received — under review, violation of policy..." value={suspendReason} onChange={e=>setSuspendReason(e.target.value)} style={{resize:"vertical",minHeight:70}}/>
+        {suspendReason.trim().length<5&&suspendReason.length>0&&<p style={{fontSize:11,color:C.danger,marginTop:4}}>Please provide a meaningful reason (min 5 chars).</p>}
+        <div style={{display:"flex",gap:9,marginTop:14}}>
+          <button onClick={()=>{setSuspendTarget(null);setSuspendReason("");}} style={{flex:1,padding:11,background:C.surface,color:C.muted,border:`1px solid ${C.border}`,borderRadius:8,fontWeight:600,cursor:"pointer"}}>Cancel</button>
+          <button disabled={suspendReason.trim().length<5} onClick={confirmSuspend} style={{flex:1,padding:11,background:C.danger,color:"white",border:"none",borderRadius:8,fontWeight:700,cursor:"pointer",opacity:suspendReason.trim().length<5?0.5:1}}>🚫 Confirm Suspend</button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  const openFilePDF=(fileData)=>{
+    try{
+      if(fileData.startsWith("data:")){
+        const [,b64]=fileData.split(",");
+        const binary=atob(b64);
+        const bytes=new Uint8Array(binary.length);
+        for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+        const blob=new Blob([bytes],{type:"application/pdf"});
+        const url=URL.createObjectURL(blob);
+        window.open(url,"_blank");
+      } else {
+        window.open(fileData,"_blank");
+      }
+    } catch(err){ alert("Could not open PDF. Please check the file."); }
+  };
+
+  const appModalJSX = viewApp ? (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setViewApp(null)}>
       <div className="modal-wide"><CloseBtn onClick={()=>setViewApp(null)}/>
         <h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:4}}>{viewApp.fullName}</h2>
@@ -1500,10 +2086,40 @@ function SuperAdminPanel({loginKey}) {
           ))}
         </div>
         {viewApp.bio&&<div style={{marginBottom:12}}><label className="label">Bio</label><p style={{fontSize:13,color:C.muted,background:C.surface,borderRadius:8,padding:10}}>{viewApp.bio}</p></div>}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:13}}>
-          {[["🪪 NIC",viewApp.nicFile],["🚔 Police",viewApp.policeFile],["📸 Photo",viewApp.photoFile],["🎓 Certs",viewApp.certFile]].map(([l,f])=>(
-            <div key={l} style={{background:f?C.successBg:C.dangerBg,borderRadius:7,padding:"7px 11px",display:"flex",justifyContent:"space-between",fontSize:12}}><span>{l}</span><span style={{fontWeight:700,color:f?C.success:C.danger}}>{f?"✓":"✗"}</span></div>
-          ))}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:13}}>
+          {[["🪪 NIC",viewApp.nicFile],["🚔 Police Clearance",viewApp.policeFile],["📸 Photo",viewApp.photoFile],["🎓 Certificates",viewApp.certFile]].map(([l,f])=>{
+            const hasFile=f?.data||typeof f==="string";
+            const fileData=f?.data||null;
+            const fileType=f?.type||"";
+            const fileName=f?.name||f||"";
+            const isImage=fileType.startsWith("image/");
+            const isPDF=fileType==="application/pdf"||fileName.endsWith(".pdf")||(fileData&&fileData.includes("application/pdf"));
+            return(
+              <div key={l} style={{background:hasFile?C.successBg:C.dangerBg,borderRadius:9,padding:"10px 12px",fontSize:12,border:`1px solid ${hasFile?C.success+"44":C.danger+"44"}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:hasFile&&fileData?8:0}}>
+                  <span style={{fontWeight:700}}>{l}</span>
+                  <span style={{fontWeight:700,color:hasFile?C.success:C.danger}}>{hasFile?"✓":"✗"}</span>
+                </div>
+                {hasFile&&fileData&&isImage&&(
+                  <div>
+                    <img
+                      src={fileData} alt={l}
+                      onClick={()=>window.open(fileData,"_blank")}
+                      style={{width:"100%",borderRadius:6,maxHeight:120,objectFit:"cover",marginBottom:4,cursor:"zoom-in"}}
+                    />
+                    <div style={{fontSize:10,color:C.muted,textAlign:"center"}}>Click to view full size</div>
+                  </div>
+                )}
+                {hasFile&&fileData&&isPDF&&(
+                  <button onClick={()=>openFilePDF(fileData)} style={{display:"block",width:"100%",background:C.info,color:"white",textAlign:"center",padding:"7px 10px",borderRadius:6,fontSize:11,fontWeight:700,border:"none",cursor:"pointer",marginBottom:4}}>
+                    📄 Open PDF
+                  </button>
+                )}
+                {hasFile&&!fileData&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>File name: {fileName}</div>}
+                {hasFile&&fileName&&fileData&&<div style={{fontSize:10,color:C.muted,wordBreak:"break-all",marginTop:2}}>{fileName}</div>}
+              </div>
+            );
+          })}
         </div>
         {(viewApp.suggestAllIn||viewApp.suggestCook)&&<div style={{background:C.infoBg,borderRadius:9,padding:9,marginBottom:11,fontSize:12,color:C.info}}>💡 Suggested — All Inclusive: {fmtLKR(viewApp.suggestAllIn||0)} · Cook-at-Home: {fmtLKR(viewApp.suggestCook||0)}</div>}
         <div style={{display:"flex",gap:9}}>
@@ -1512,12 +2128,9 @@ function SuperAdminPanel({loginKey}) {
         </div>
       </div>
     </div>
-  );
-  };
+  ) : null;
 
-  const FeeModal=()=>{
-    if(!editFee) return null;
-    return (
+  const feeModalJSX = editFee ? (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setEditFee(null)}>
       <div className="modal"><CloseBtn onClick={()=>setEditFee(null)}/>
         <h2 style={{fontFamily:F.heading,fontSize:19,marginBottom:4}}>Set Starting Price — {editFee.alias}</h2>
@@ -1530,21 +2143,21 @@ function SuperAdminPanel({loginKey}) {
         <button className="btn-primary" style={{width:"100%",padding:11,marginTop:14}} onClick={()=>setChefStarting(editFee.id,feeForm)}>✅ Save Starting Price</button>
       </div>
     </div>
-  );
-  };
+  ) : null;
+
 
   const ROLE_COLORS={super_admin:{bg:"#F3E8FF",c:"#7C3AED",l:"Super Admin"},maintenance_admin:{bg:"#E0F2FE",c:"#0369A1",l:"Maint. Admin"},chef:{bg:C.successBg,c:C.success,l:"Chef"},customer:{bg:C.infoBg,c:C.info,l:"Customer"}};
   const getRoleDisplay=(email)=>{ const stored=loadUsers().find(u=>u.email===email); return userRoles[email]||stored?.role||"customer"; };
 
   return(
     <div style={{display:"flex",minHeight:"calc(100vh - 64px)"}}>
-      <AppModal/><FeeModal/>
+      {appModalJSX}{feeModalJSX}{suspendModalJSX}
       <div style={{width:240,background:"#0A0F1E",padding:"22px 11px",flexShrink:0}}>
         <div style={{padding:"0 7px 18px",borderBottom:"1px solid rgba(255,255,255,.08)",marginBottom:13}}>
           <div style={{fontFamily:F.heading,fontSize:15,color:"white",fontWeight:700}}>🍽️ ChefAtHome</div>
           <div style={{color:C.primary,fontSize:11,marginTop:2}}>⚡ Super Admin Panel</div>
         </div>
-        {[["dashboard","📊","Dashboard"],["chef-apps","📋","Chef Applications",pendingApps.length],["maint-admins","🔧","Maintenance Admins"],["chefs","👨‍🍳","Chef Starting Prices"],["users","👥","All Users"],["bookings","📅","All Bookings"],["payments","💳","Payments"],["fee-sugs","💡","Fee Suggestions",feeSugs.length],["proposals","📝","All Proposals"],["settings","⚙️","Settings"]].map(([id,ic,l,cnt])=>(
+        {[["dashboard","📊","Dashboard"],["chef-apps","📋","Chef Applications",pendingApps.length],["maint-admins","🔧","Maintenance Admins"],["chefs","👨‍🍳","Chef Management"],["users","👥","All Users"],["bookings","📅","All Bookings"],["payments","💳","Payments"],["fee-sugs","💡","Fee Suggestions",feeSugs.length],["proposals","📝","All Proposals"],["activity","🕐","Login History"],["settings","⚙️","Settings"]].map(([id,ic,l,cnt])=>(
           <div key={id} className={`sidebar-link ${tab===id?"active":""}`} onClick={()=>{setTab(id);refresh();}} style={{position:"relative"}}>
             <span>{ic}</span><span style={{fontSize:13}}>{l}</span>
             {cnt>0&&<span style={{marginLeft:"auto",background:C.danger,color:"white",borderRadius:10,fontSize:10,fontWeight:700,padding:"2px 6px"}}>{cnt}</span>}
@@ -1589,9 +2202,10 @@ function SuperAdminPanel({loginKey}) {
                   <span style={{background:C.warnBg,color:C.warn,padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:700}}>⏳ Pending</span>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:7,marginBottom:11}}>
-                  {[["🪪 NIC",app.nicFile],["🚔 Police",app.policeFile],["📸 Photo",app.photoFile],["🎓 Certs",app.certFile]].map(([l,f])=>(
-                    <div key={l} style={{background:f?C.successBg:C.surface,borderRadius:7,padding:"5px 9px",fontSize:11,textAlign:"center",border:`1px solid ${f?C.success+"44":C.border}`}}><div>{l}</div><div style={{fontWeight:700,color:f?C.success:C.muted}}>{f?"✓":"–"}</div></div>
-                  ))}
+                  {[["🪪 NIC",app.nicFile],["🚔 Police",app.policeFile],["📸 Photo",app.photoFile],["🎓 Certs",app.certFile]].map(([l,f])=>{
+                    const has=f?.data||typeof f==="string";
+                    return(<div key={l} style={{background:has?C.successBg:C.surface,borderRadius:7,padding:"5px 9px",fontSize:11,textAlign:"center",border:`1px solid ${has?C.success+"44":C.border}`}}><div>{l}</div><div style={{fontWeight:700,color:has?C.success:C.muted}}>{has?"✓":"–"}</div></div>);
+                  })}
                 </div>
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>setViewApp(app)} style={{background:C.infoBg,color:C.info,padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>📄 Review</button>
@@ -1604,75 +2218,126 @@ function SuperAdminPanel({loginKey}) {
         )}
 
         {tab==="maint-admins"&&(
-          <div>
-            <h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:6}}>Maintenance Admins</h2>
-            <p style={{color:C.muted,marginBottom:16,fontSize:13}}>Assign or remove Maintenance Admin access. Maintenance admins review chef proposals before customers are notified.</p>
-            <div style={{background:C.infoBg,borderRadius:10,padding:"11px 16px",marginBottom:20,fontSize:13,color:C.info}}>
-              ℹ️ Maintenance admins can: review proposals, accept/reject, adjust prices, view bookings. They cannot manage users, settings, or chef applications.
-            </div>
-            {/* Promote any user to M.Admin */}
-            <div style={{background:"white",borderRadius:12,border:`1px solid ${C.border}`,padding:18,marginBottom:20}}>
-              <div style={{fontWeight:700,fontSize:14,marginBottom:12}}>🔧 Current Maintenance Admins</div>
-              {allUsers.filter(u=>getRoleDisplay(u.email)==="maintenance_admin").length===0
-                ? <p style={{color:C.muted,fontSize:13}}>No maintenance admins yet. Assign one from All Users below.</p>
-                : allUsers.filter(u=>getRoleDisplay(u.email)==="maintenance_admin").map((u,i)=>(
-                  <div key={u.email} style={{background:"#E0F2FE",borderRadius:9,border:"1px solid #BAE6FD",padding:"12px 16px",marginBottom:9,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <Avatar initials={(u.name||"U").split(" ").map(n=>n[0]).join("").slice(0,2)} size={34} color="#0369A1"/>
-                      <div><div style={{fontWeight:600,fontSize:13}}>{u.name||u.email}</div><div style={{fontSize:11,color:"#0369A1"}}>{u.email}</div></div>
-                    </div>
-                    <button onClick={()=>{if(window.confirm(`Remove Maintenance Admin role from ${u.name||u.email}?`)){removeUserRole(u.email);}}} style={{background:C.dangerBg,color:C.danger,padding:"6px 14px",borderRadius:6,fontSize:12,fontWeight:700,border:"none",cursor:"pointer"}}>🗑 Remove M.Admin</button>
-                  </div>
-                ))
-              }
-            </div>
-            <div style={{background:"white",borderRadius:12,border:`1px solid ${C.border}`,padding:18}}>
-              <div style={{fontWeight:700,fontSize:14,marginBottom:12}}>👥 All Users — Assign M.Admin Role</div>
-              {allUsers.filter(u=>getRoleDisplay(u.email)!=="super_admin"&&getRoleDisplay(u.email)!=="maintenance_admin").map((u,i)=>{
-                const currentRole=getRoleDisplay(u.email);
-                const rc=ROLE_COLORS[currentRole]||ROLE_COLORS.customer;
-                return(
-                  <div key={u.email} style={{border:`1px solid ${C.border}`,borderRadius:9,padding:"11px 14px",marginBottom:8,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <Avatar initials={(u.name||"U").split(" ").map(n=>n[0]).join("").slice(0,2)} size={32} color={[C.primary,C.info,C.success,C.warn,C.purple][i%5]}/>
-                      <div><div style={{fontWeight:600,fontSize:13}}>{u.name||u.email}</div><div style={{fontSize:11,color:C.muted}}>{u.email}</div></div>
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:9}}>
-                      <span style={{padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:rc.bg,color:rc.c}}>{rc.l}</span>
-                      <button onClick={()=>setUserRole(u.email,"maintenance_admin")} style={{background:"#E0F2FE",color:"#0369A1",padding:"5px 12px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>🔧 Make M.Admin</button>
-                    </div>
-                  </div>
-                );
-              })}
-              {allUsers.filter(u=>getRoleDisplay(u.email)!=="super_admin"&&getRoleDisplay(u.email)!=="maintenance_admin").length===0&&
-                <p style={{color:C.muted,fontSize:13,textAlign:"center",padding:16}}>All users are already admins or no users registered yet.</p>}
-            </div>
-          </div>
+          <MaintAdminManager setUserRole={setUserRole} removeUserRole={removeUserRole} allUsers={allUsers}/>
         )}
 
         {tab==="chefs"&&(
           <div>
-            <h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:6}}>Chef Starting Prices</h2>
-            <p style={{color:C.muted,marginBottom:18,fontSize:13}}>Set the "Starting from" price displayed on each chef's card. Actual price is set per booking via proposal.</p>
-            {CHEFS_DATA.filter(c=>!removedChefIds.includes(c.id)).map(c=>{
+            <h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:6}}>Chef Management</h2>
+            <p style={{color:C.muted,marginBottom:18,fontSize:13}}>Set starting prices, suspend chefs, and view order history. Only Super Admin can suspend chefs.</p>
+            {getAllChefs().map((c,idx)=>{
               const fee=chefFeeMap[c.id];
+              const displayId=c.displayId||getStaticChefDisplayId(idx);
+              const chefBookings=allBookings.filter(b=>b.chefAlias===c.alias);
+              const chefProposals=allProposals.filter(p=>p.chefAlias===c.alias);
+              const totalEarned=chefBookings.reduce((s,b)=>s+(b.amount||0),0);
+              const completedOrders=chefBookings.filter(b=>b.status==="completed");
+              const [expanded,setExpanded]=[false,()=>{}]; // handled via expandedChef state below
               return(
-                <div key={c.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:17,marginBottom:10,display:"flex",alignItems:"center",gap:13,justifyContent:"space-between"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:11}}>
-                    <Avatar initials={c.image} size={38} color={c.type==="premium"?"#B45309":C.primary}/>
-                    <div><div style={{fontWeight:600,fontSize:14}}>{c.alias}</div><div style={{fontSize:11,color:C.muted}}>{c.type==="premium"?"Premium":"Standard"} · {c.location}</div></div>
+                <div key={c.id} style={{background:"white",borderRadius:11,border:`1px solid ${c.isDynamic?C.success:C.border}`,marginBottom:10,overflow:"hidden"}}>
+                  {/* Chef row */}
+                  <div style={{padding:17,display:"flex",alignItems:"center",gap:13,justifyContent:"space-between"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:11}}>
+                      <div style={{textAlign:"center",minWidth:52}}>
+                        <div style={{background:C.dark,color:"white",borderRadius:7,padding:"3px 7px",fontSize:10,fontWeight:800,letterSpacing:.5,fontFamily:"monospace"}}>{displayId}</div>
+                      </div>
+                      <Avatar initials={c.image||c.alias?.slice(0,2)} size={38} color={c.type==="premium"?"#B45309":C.primary}/>
+                      <div>
+                        <div style={{fontWeight:600,fontSize:14}}>{c.alias}</div>
+                        <div style={{fontSize:11,color:C.muted}}>{c.type==="premium"?"Premium":"Standard"} · {c.location}
+                          {c.isDynamic&&<span style={{marginLeft:7,background:C.successBg,color:C.success,padding:"1px 7px",borderRadius:10,fontSize:10,fontWeight:700}}>NEW ✓ Approved</span>}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:11}}>
+                      {/* Quick stats */}
+                      <div style={{display:"flex",gap:14,marginRight:6}}>
+                        <div style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Orders</div><div style={{fontWeight:700,color:C.primary,fontSize:13}}>{chefBookings.length}</div></div>
+                        <div style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Earned</div><div style={{fontWeight:700,color:C.success,fontSize:13}}>{fmtLKR(totalEarned)}</div></div>
+                        <div style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Starting</div><div style={{fontWeight:700,color:C.primary,fontSize:13}}>{fee?fmtLKR(fee.startingFrom||c.startingFrom):fmtLKR(c.startingFrom||0)}</div></div>
+                      </div>
+                      <button onClick={()=>setExpandedChef(expandedChef===c.id?null:c.id)} style={{background:C.surface,color:C.muted,padding:"6px 11px",borderRadius:6,fontSize:12,fontWeight:600,border:`1px solid ${C.border}`,cursor:"pointer"}}>{expandedChef===c.id?"▲ Hide":"📋 Orders"}</button>
+                      <button onClick={()=>{setEditFee(c);setFeeForm({startingFrom:fee?.startingFrom||c.startingFrom||0,extraPerGuest:fee?.extraPerGuest||2000});}} style={{background:C.infoBg,color:C.info,padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✏️ Price</button>
+                      <button onClick={()=>setSuspendTarget({id:c.id,alias:c.alias,displayId})} style={{background:"#FFF7ED",color:"#C2410C",padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"1px solid #FDBA74",cursor:"pointer"}}>🚫 Suspend</button>
+                    </div>
                   </div>
-                  <div style={{display:"flex",alignItems:"center",gap:11}}>
-                    <div style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Starting From</div><div style={{fontWeight:700,color:C.primary,fontSize:14}}>{fee?fmtLKR(fee.startingFrom||c.startingFrom):fmtLKR(c.startingFrom)}</div></div>
-                    <button onClick={()=>{setEditFee(c);setFeeForm({startingFrom:fee?.startingFrom||c.startingFrom,extraPerGuest:fee?.extraPerGuest||2000});}} style={{background:C.infoBg,color:C.info,padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✏️ Edit Price</button>
-                    <button onClick={()=>removeChef(c.id,c.alias)} style={{background:C.dangerBg,color:C.danger,padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>🗑 Remove Chef</button>
-                  </div>
+                  {/* Expanded order history */}
+                  {expandedChef===c.id&&(
+                    <div style={{borderTop:`1px solid ${C.border}`,padding:"14px 17px",background:C.surface}}>
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
+                        <div style={{background:"white",borderRadius:8,padding:"10px 14px",border:`1px solid ${C.border}`}}><div style={{fontSize:10,color:C.muted}}>Total Bookings</div><div style={{fontWeight:700,fontSize:16,color:C.primary}}>{chefBookings.length}</div></div>
+                        <div style={{background:"white",borderRadius:8,padding:"10px 14px",border:`1px solid ${C.border}`}}><div style={{fontSize:10,color:C.muted}}>Completed</div><div style={{fontWeight:700,fontSize:16,color:C.success}}>{completedOrders.length}</div></div>
+                        <div style={{background:"white",borderRadius:8,padding:"10px 14px",border:`1px solid ${C.border}`}}><div style={{fontSize:10,color:C.muted}}>Proposals</div><div style={{fontWeight:700,fontSize:16,color:C.info}}>{chefProposals.length}</div></div>
+                        <div style={{background:"white",borderRadius:8,padding:"10px 14px",border:`1px solid ${C.border}`}}><div style={{fontSize:10,color:C.muted}}>Total Earned</div><div style={{fontWeight:700,fontSize:16,color:C.success}}>{fmtLKR(totalEarned)}</div></div>
+                      </div>
+                      {chefBookings.length===0
+                        ? <div style={{textAlign:"center",padding:"18px 0",color:C.muted,fontSize:13}}>No orders yet for this chef.</div>
+                        : <div>
+                            <div style={{fontWeight:700,fontSize:13,marginBottom:9}}>Order History</div>
+                            <div style={{maxHeight:280,overflowY:"auto"}}>
+                              {chefBookings.slice().reverse().map(b=>(
+                                <div key={b.id} style={{background:"white",borderRadius:8,padding:"10px 13px",marginBottom:7,border:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                                  <div>
+                                    <div style={{fontWeight:600,fontSize:13}}>{b.customerName||b.customerEmail}</div>
+                                    <div style={{fontSize:11,color:C.muted}}>#{b.id} · {b.date||"—"} · {b.guests||"?"} guests</div>
+                                    {b.occasion&&<div style={{fontSize:11,color:C.muted}}>🎉 {b.occasion}</div>}
+                                  </div>
+                                  <div style={{textAlign:"right"}}>
+                                    <div style={{fontWeight:700,color:C.primary,fontSize:13}}>{b.amount?fmtLKR(b.amount):"TBD"}</div>
+                                    <BookingStatusBadge status={b.status}/>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                      }
+                    </div>
+                  )}
                 </div>
               );
             })}
-            {removedChefIds.length>0&&(
-              <div style={{marginTop:16,padding:"10px 14px",background:C.surface,borderRadius:9,border:`1px solid ${C.border}`,fontSize:12,color:C.muted}}>
-                {removedChefIds.length} chef(s) removed. <span style={{color:C.primary,cursor:"pointer",fontWeight:600}} onClick={()=>{ls.set("cah_removed_chefs",[]);setRemovedChefIds([]);}}>Restore all</span>
+
+            {/* Suspended Chefs */}
+            {suspendedChefs.length>0&&(
+              <div style={{marginTop:22}}>
+                <h3 style={{fontFamily:F.heading,fontSize:16,marginBottom:13,color:C.danger}}>🚫 Suspended Chefs ({suspendedChefs.length})</h3>
+                {suspendedChefs.map(s=>(
+                  <div key={s.id} style={{background:"white",borderRadius:10,border:`1px solid ${C.danger}44`,padding:14,marginBottom:9,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                        <span style={{background:C.dark,color:"white",borderRadius:5,padding:"2px 6px",fontSize:10,fontWeight:800,fontFamily:"monospace"}}>{String(s.id).startsWith("dyn_")?"CHF-?":s.id}</span>
+                        <span style={{fontWeight:700,fontSize:14}}>{s.alias}</span>
+                        <span style={{background:C.dangerBg,color:C.danger,padding:"2px 8px",borderRadius:20,fontSize:10,fontWeight:700}}>SUSPENDED</span>
+                      </div>
+                      <div style={{fontSize:11,color:C.muted}}>Suspended {new Date(s.suspendedAt).toLocaleDateString("en-LK",{day:"numeric",month:"short",year:"numeric"})}</div>
+                      <div style={{fontSize:11,color:C.warn,marginTop:2}}>📝 Reason: {s.reason}</div>
+                    </div>
+                    <button onClick={()=>reactivateChef(s.id,s.alias)} style={{background:C.successBg,color:C.success,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:700,border:`1px solid ${C.success}44`,cursor:"pointer"}}>✅ Re-activate</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Chef History Log */}
+            {chefHistoryLog.length>0&&(
+              <div style={{marginTop:22,background:"white",borderRadius:12,border:`1px solid ${C.border}`,padding:18}}>
+                <h3 style={{fontFamily:F.heading,fontSize:15,marginBottom:13}}>📋 Chef Action History</h3>
+                <div style={{maxHeight:320,overflowY:"auto"}}>
+                  {chefHistoryLog.map((ev,i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.border}`,fontSize:12}}>
+                      <div style={{display:"flex",alignItems:"center",gap:9}}>
+                        <div style={{width:30,height:30,borderRadius:"50%",background:ev.action==="suspended"?C.dangerBg:C.successBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>
+                          {ev.action==="suspended"?"🚫":"✅"}
+                        </div>
+                        <div>
+                          <div><strong>{ev.chefAlias}</strong> — <span style={{color:ev.action==="suspended"?C.danger:C.success,fontWeight:700,textTransform:"capitalize"}}>{ev.action}</span></div>
+                          <div style={{color:C.muted,fontSize:11}}>📝 {ev.reason}</div>
+                        </div>
+                      </div>
+                      <div style={{fontSize:11,color:C.muted,textAlign:"right",flexShrink:0}}>{new Date(ev.at).toLocaleString("en-LK",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -1680,31 +2345,148 @@ function SuperAdminPanel({loginKey}) {
 
         {tab==="users"&&(
           <div>
-            <h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:18}}>All Users</h2>
-            {allUsers.map((u,i)=>{const currentRole=getRoleDisplay(u.email);const rc=ROLE_COLORS[currentRole]||ROLE_COLORS.customer;return(
-              <div key={u.email} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:15,marginBottom:9,display:"flex",alignItems:"center",gap:11,justifyContent:"space-between"}}>
-                <div style={{display:"flex",gap:10,alignItems:"center"}}><Avatar initials={(u.name||"U").split(" ").map(n=>n[0]).join("").slice(0,2)} size={34} color={[C.primary,C.info,C.success,C.warn][i%4]}/><div><div style={{fontWeight:600,fontSize:13}}>{u.name||u.email}</div><div style={{fontSize:11,color:C.muted}}>{u.email}</div></div></div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+              <h2 style={{fontFamily:F.heading,fontSize:20}}>All Users</h2>
+              <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                <span style={{fontSize:13,color:C.muted}}>{allUsers.length} registered</span>
+                <button onClick={()=>setTab("activity")} style={{background:C.infoBg,color:C.info,padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>🕐 View Login History</button>
+              </div>
+            </div>
+            {/* Summary stats */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:11,marginBottom:20}}>
+              <MetricCard label="Total Users" value={allUsers.length} color={C.primary}/>
+              <MetricCard label="Customers" value={allUsers.filter(u=>getRoleDisplay(u.email)==="customer").length} color={C.info}/>
+              <MetricCard label="Chefs" value={allUsers.filter(u=>getRoleDisplay(u.email)==="chef").length} color={C.success}/>
+              <MetricCard label="Admins" value={allUsers.filter(u=>["maintenance_admin","super_admin"].includes(getRoleDisplay(u.email))).length} color={C.purple}/>
+            </div>
+            {allUsers.length===0?<EmptyState icon="👥" text="No users registered yet."/>:allUsers.map((u,i)=>{
+              const currentRole=getRoleDisplay(u.email);
+              const rc=ROLE_COLORS[currentRole]||ROLE_COLORS.customer;
+              const log=loadActivityLog().filter(e=>e.email===u.email);
+              const lastLogin=log.filter(e=>e.type==="login").slice(-1)[0];
+              const loginCount=log.filter(e=>e.type==="login").length;
+              const userBookings=allBookings.filter(b=>b.customerEmail===u.email);
+              return(
+              <div key={u.email} style={{background:"white",borderRadius:12,border:`1px solid ${C.border}`,padding:16,marginBottom:10}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                  <div style={{display:"flex",gap:11,alignItems:"center"}}>
+                    <Avatar initials={(u.name||"U").split(" ").map(n=>n[0]).join("").slice(0,2)} size={38} color={[C.primary,C.info,C.success,C.warn,C.purple][i%5]}/>
+                    <div>
+                      <div style={{fontWeight:700,fontSize:14}}>{u.name||"—"}</div>
+                      <div style={{fontSize:12,color:C.muted}}>{u.email}</div>
+                    </div>
+                  </div>
                   <div style={{display:"flex",alignItems:"center",gap:9}}>
-                  <span style={{padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:700,background:rc.bg,color:rc.c}}>{rc.l}</span>
-                  {currentRole!=="super_admin"&&(
-                    <select value={currentRole} onChange={e=>setUserRole(u.email,e.target.value)} style={{fontSize:12,padding:"4px 8px",borderRadius:6,border:`1px solid ${C.border}`,cursor:"pointer"}}>
-                      <option value="customer">Customer</option>
-                      <option value="chef">Chef</option>
-                      <option value="maintenance_admin">Maintenance Admin</option>
-                    </select>
-                  )}
-                  {(currentRole==="chef"||currentRole==="maintenance_admin")&&(
-                    <button onClick={()=>{if(window.confirm(`Remove ${rc.l} role from ${u.name||u.email}?`))removeUserRole(u.email);}} style={{background:C.dangerBg,color:C.danger,padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:700,border:"none",cursor:"pointer"}}>🗑 Remove</button>
-                  )}
+                    <span style={{padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:700,background:rc.bg,color:rc.c}}>{rc.l}</span>
+                    {currentRole!=="super_admin"&&(
+                      <select value={currentRole} onChange={e=>setUserRole(u.email,e.target.value)} style={{fontSize:12,padding:"5px 9px",borderRadius:6,border:`1px solid ${C.border}`,cursor:"pointer"}}>
+                        <option value="customer">Customer</option>
+                        <option value="chef">Chef</option>
+
+                      </select>
+                    )}
+                    {(currentRole==="chef"||currentRole==="maintenance_admin")&&(
+                      <button onClick={()=>{if(window.confirm(`Remove ${rc.l} role from ${u.name||u.email}?`))removeUserRole(u.email);}} style={{background:C.dangerBg,color:C.danger,padding:"5px 11px",borderRadius:6,fontSize:12,fontWeight:700,border:"none",cursor:"pointer"}}>🗑 Remove</button>
+                    )}
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:9,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                  <div style={{textAlign:"center",padding:"7px 0",background:C.surface,borderRadius:8}}>
+                    <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Joined</div>
+                    <div style={{fontSize:12,fontWeight:600}}>{u.joinedAt?new Date(u.joinedAt).toLocaleDateString("en-LK",{day:"numeric",month:"short",year:"numeric"}):"—"}</div>
+                  </div>
+                  <div style={{textAlign:"center",padding:"7px 0",background:C.surface,borderRadius:8}}>
+                    <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Last Login</div>
+                    <div style={{fontSize:12,fontWeight:600}}>{lastLogin?new Date(lastLogin.at).toLocaleDateString("en-LK",{day:"numeric",month:"short"}):"—"}</div>
+                  </div>
+                  <div style={{textAlign:"center",padding:"7px 0",background:C.surface,borderRadius:8}}>
+                    <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Total Logins</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.info}}>{loginCount}</div>
+                  </div>
+                  <div style={{textAlign:"center",padding:"7px 0",background:C.surface,borderRadius:8}}>
+                    <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Bookings</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.primary}}>{userBookings.length}</div>
+                  </div>
                 </div>
               </div>
             );})}
           </div>
         )}
 
+        {tab==="activity"&&(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+              <div>
+                <h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:3}}>Login & Signup History</h2>
+                <p style={{color:C.muted,fontSize:13}}>All user authentication events on the platform</p>
+              </div>
+              <div style={{display:"flex",gap:9,alignItems:"center"}}>
+                <span style={{fontSize:13,color:C.muted}}>{loadActivityLog().length} events</span>
+                <button onClick={()=>{if(window.confirm("Clear all activity logs?")){ls.set(K.activityLog,[]);refresh();}}} style={{background:C.dangerBg,color:C.danger,padding:"6px 13px",borderRadius:7,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>🗑 Clear Log</button>
+              </div>
+            </div>
+            {/* Summary */}
+            {(()=>{const log=loadActivityLog();const signups=log.filter(e=>e.type==="signup");const logins=log.filter(e=>e.type==="login");const today=new Date().toDateString();const todayLogins=logins.filter(e=>new Date(e.at).toDateString()===today);return(
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:11,marginBottom:20}}>
+                <MetricCard label="Total Signups" value={signups.length} color={C.success}/>
+                <MetricCard label="Total Logins" value={logins.length} color={C.primary}/>
+                <MetricCard label="Logins Today" value={todayLogins.length} color={C.info}/>
+                <MetricCard label="Unique Users" value={new Set(log.map(e=>e.email)).size} color={C.purple}/>
+              </div>
+            );})()}
+            {/* Per-user breakdown */}
+            {allUsers.length>0&&(
+              <div style={{background:"white",borderRadius:12,border:`1px solid ${C.border}`,padding:18,marginBottom:18}}>
+                <div style={{fontWeight:700,fontSize:14,marginBottom:12}}>👥 Per User Summary</div>
+                <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",gap:0,fontSize:12}}>
+                  {["User","Role","Joined","Logins","Last Login"].map(h=><div key={h} style={{padding:"7px 10px",background:C.surface,fontWeight:700,color:C.muted,fontSize:11,borderBottom:`2px solid ${C.border}`}}>{h}</div>)}
+                  {allUsers.map((u,i)=>{
+                    const log=loadActivityLog().filter(e=>e.email===u.email);
+                    const loginCount=log.filter(e=>e.type==="login").length;
+                    const lastLogin=log.filter(e=>e.type==="login").slice(-1)[0];
+                    const currentRole=getRoleDisplay(u.email);
+                    const rc=ROLE_COLORS[currentRole]||ROLE_COLORS.customer;
+                    return[
+                      <div key={u.email+"n"} style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}><Avatar initials={(u.name||"U").split(" ").map(n=>n[0]).join("").slice(0,2)} size={24} color={[C.primary,C.info,C.success][i%3]}/><div><div style={{fontWeight:600}}>{u.name||"—"}</div><div style={{fontSize:10,color:C.muted}}>{u.email}</div></div></div>,
+                      <div key={u.email+"r"} style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,verticalAlign:"middle"}}><span style={{background:rc.bg,color:rc.c,padding:"2px 8px",borderRadius:20,fontSize:10,fontWeight:700}}>{rc.l}</span></div>,
+                      <div key={u.email+"j"} style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,color:C.muted}}>{u.joinedAt?new Date(u.joinedAt).toLocaleDateString("en-LK",{day:"numeric",month:"short",year:"2-digit"}):"—"}</div>,
+                      <div key={u.email+"l"} style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,fontWeight:700,color:C.primary}}>{loginCount}</div>,
+                      <div key={u.email+"ll"} style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,color:C.muted,fontSize:11}}>{lastLogin?new Date(lastLogin.at).toLocaleString("en-LK",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"Never"}</div>,
+                    ];
+                  })}
+                </div>
+              </div>
+            )}
+            {/* Full event log */}
+            <div style={{background:"white",borderRadius:12,border:`1px solid ${C.border}`,padding:18}}>
+              <div style={{fontWeight:700,fontSize:14,marginBottom:12}}>📋 Full Event Log</div>
+              {loadActivityLog().length===0?<EmptyState icon="🕐" text="No activity recorded yet. Events appear as users log in or sign up."/>:
+              loadActivityLog().slice().reverse().map((ev,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:11}}>
+                    <div style={{width:34,height:34,borderRadius:"50%",background:ev.type==="signup"?C.successBg:C.infoBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
+                      {ev.type==="signup"?"✨":"🔐"}
+                    </div>
+                    <div>
+                      <div style={{fontWeight:600,fontSize:13}}>{ev.name||ev.email}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{ev.email}</div>
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <span style={{background:ev.type==="signup"?C.successBg:C.infoBg,color:ev.type==="signup"?C.success:C.info,padding:"3px 10px",borderRadius:20,fontSize:11,fontWeight:700,display:"inline-block",marginBottom:3}}>
+                      {ev.type==="signup"?"✨ New Signup":"🔐 Login"}
+                    </span>
+                    <div style={{fontSize:11,color:C.muted}}>{new Date(ev.at).toLocaleString("en-LK",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {tab==="bookings"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:18}}>All Bookings</h2>{allBookings.length===0?<EmptyState icon="📅" text="No bookings yet."/>:allBookings.slice().reverse().map(b=><div key={b.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:17,marginBottom:9}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:9}}><div><div style={{fontWeight:700,fontSize:14}}>{b.customerName||b.customerEmail}</div><div style={{fontSize:11,color:C.muted}}>#{b.id} · {b.chefAlias}</div></div><BookingStatusBadge status={b.status}/></div><div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:9,fontSize:12}}>{[["Date",b.date||"—"],["Time",b.time||"—"],["Guests",b.guests||"—"],["Phone",b.customerPhone||"—"],["Amount",b.amount?fmtLKR(b.amount):"TBD"]].map(([k,v])=><div key={k}><div style={{color:C.muted,fontSize:10}}>{k}</div><div style={{fontWeight:600}}>{v}</div></div>)}</div></div>)}</div>}
         {tab==="payments"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:16}}>Payments</h2><div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:13,marginBottom:20}}><MetricCard label="Total Revenue" value={fmtLKR(totalRevenue)} color={C.primary}/><MetricCard label="Platform Fees" value={fmtLKR(allBookings.reduce((s,b)=>s+(b.commissionAmt||0),0))} color={C.info}/><MetricCard label="Safety Holds" value={fmtLKR(allBookings.reduce((s,b)=>s+(b.holdAmt||0),0))} color={C.warn}/></div>{allBookings.filter(b=>b.amount).length===0?<EmptyState icon="💳" text="No payments yet."/>:allBookings.filter(b=>b.amount).slice().reverse().map(b=><div key={b.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:16,marginBottom:9,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:600}}>{b.customerName||b.customerEmail}</div><div style={{fontSize:11,color:C.muted}}>{b.date} · {b.chefAlias}</div></div><div style={{textAlign:"right"}}><div style={{fontWeight:700,color:C.primary}}>{fmtLKR(b.amount)}</div><div style={{fontSize:11,color:C.muted}}>Fee: {fmtLKR(b.commissionAmt||0)} · Hold: {fmtLKR(b.holdAmt||0)}</div></div></div>)}</div>}
-        {tab==="fee-sugs"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:6}}>Fee Suggestions</h2><p style={{color:C.muted,marginBottom:18,fontSize:13}}>Chef suggested starting price adjustments. You control the final rates.</p>{feeSugs.length===0?<EmptyState icon="💡" text="No pending suggestions."/>:feeSugs.map(sug=><div key={sug.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:18,marginBottom:11}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:9}}><div><div style={{fontWeight:700,fontSize:14}}>{sug.chefAlias}</div><div style={{fontSize:11,color:C.muted}}>{sug.chefEmail}</div></div><span style={{background:C.warnBg,color:C.warn,padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:700}}>Pending</span></div><div style={{display:"flex",gap:18,marginBottom:9}}><div><span style={{fontSize:12,color:C.muted}}>All Inclusive: </span><strong>{fmtLKR(sug.suggestAllIn)}</strong></div><div><span style={{fontSize:12,color:C.muted}}>Cook-at-Home: </span><strong>{fmtLKR(sug.suggestCook)}</strong></div></div>{sug.note&&<p style={{fontSize:13,color:C.muted,marginBottom:9}}>{sug.note}</p>}<div style={{display:"flex",gap:8}}><button onClick={()=>approveSug(sug)} style={{background:C.success,color:"white",padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✓ Approve</button><button onClick={()=>{const chef=CHEFS_DATA.find(c=>c.alias===sug.chefAlias);if(chef){setEditFee(chef);setFeeForm({startingFrom:sug.suggestAllIn,extraPerGuest:settings.extraPerGuest});}}} style={{background:C.infoBg,color:C.info,padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✏️ Modify</button></div></div>)}</div>}
+        {tab==="fee-sugs"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:6}}>Fee Suggestions</h2><p style={{color:C.muted,marginBottom:18,fontSize:13}}>Chef suggested starting price adjustments. You control the final rates.</p>{feeSugs.length===0?<EmptyState icon="💡" text="No pending suggestions."/>:feeSugs.map(sug=><div key={sug.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:18,marginBottom:11}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:9}}><div><div style={{fontWeight:700,fontSize:14}}>{sug.chefAlias}</div><div style={{fontSize:11,color:C.muted}}>{sug.chefEmail}</div></div><span style={{background:C.warnBg,color:C.warn,padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:700}}>Pending</span></div><div style={{display:"flex",gap:18,marginBottom:9}}><div><span style={{fontSize:12,color:C.muted}}>All Inclusive: </span><strong>{fmtLKR(sug.suggestAllIn)}</strong></div><div><span style={{fontSize:12,color:C.muted}}>Cook-at-Home: </span><strong>{fmtLKR(sug.suggestCook)}</strong></div></div>{sug.note&&<p style={{fontSize:13,color:C.muted,marginBottom:9}}>{sug.note}</p>}<div style={{display:"flex",gap:8}}><button onClick={()=>approveSug(sug)} style={{background:C.success,color:"white",padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✓ Approve</button><button onClick={()=>{const chef=getAllChefs().find(c=>c.alias===sug.chefAlias);if(chef){setEditFee(chef);setFeeForm({startingFrom:sug.suggestAllIn,extraPerGuest:settings.extraPerGuest});}}} style={{background:C.infoBg,color:C.info,padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✏️ Modify</button></div></div>)}</div>}
         {tab==="proposals"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:18}}>All Proposals</h2>{allProposals.length===0?<EmptyState icon="📝" text="No proposals yet."/>:allProposals.slice().reverse().map(p=>{const sc={pending_review:{bg:C.warnBg,c:C.warn,l:"Pending"},accepted:{bg:C.successBg,c:C.success,l:"Accepted"},rejected:{bg:C.dangerBg,c:C.danger,l:"Rejected"}}[p.status]||{bg:C.surface,c:C.muted,l:p.status};return(<div key={p.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:16,marginBottom:9,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:700,fontSize:14}}>{p.chefAlias} → {p.customerEmail}</div><div style={{fontSize:11,color:C.muted}}>{new Date(p.submittedAt).toLocaleDateString()} · {(p.menuItems||[]).length} dishes</div></div><div style={{textAlign:"right",display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end"}}><div style={{fontWeight:700,color:C.primary}}>{fmtLKR(p.finalPrice||p.proposedPrice)}</div><span style={{background:sc.bg,color:sc.c,padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:600}}>{sc.l}</span></div></div>);})}</div>}
         {tab==="settings"&&(
           <div>
@@ -1801,6 +2583,16 @@ function AppInner() {
   const [showAuth,setShowAuth]=useState(null);
   const [selectedChef,setSelectedChef]=useState(null);
   const [bookingChef,setBookingChef]=useState(null);
+  const [chefListKey,setChefListKey]=useState(0);
+  // Re-render chef-related pages whenever removed list or dynamic chefs change
+  useEffect(()=>{
+    const onStorage=(e)=>{
+      if(!e||["cah_removed_chefs","cah_dynamic_chefs"].includes(e.key)||e.key===null)
+        setChefListKey(k=>k+1);
+    };
+    window.addEventListener("storage",onStorage);
+    return()=>window.removeEventListener("storage",onStorage);
+  },[]);
 
   useEffect(()=>{
     setSelectedChef(null); setBookingChef(null);
@@ -1826,11 +2618,11 @@ function AppInner() {
     <div style={{minHeight:"100vh",background:C.surface}}>
       <style>{css}</style>
       <Navbar page={page} setPage={setPage} user={user} onLogout={handleLogout} setShowAuth={setShowAuth}/>
-      {page==="home"&&<><HeroSection setPage={setPage}/><FeaturesRow/><PopularExperiences setPage={setPage}/><HowItWorks/><StatsRow/><TrustSection/><Footer setPage={setPage}/></>}
-      {page==="chefs"&&<><ChefsPage setPage={setPage} setSelectedChef={setSelectedChef}/><Footer setPage={setPage}/></>}
+      {page==="home"&&<><HeroSection setPage={setPage}/><FeaturesRow/><PopularExperiences key={`pop-${chefListKey}`} setPage={setPage}/><HowItWorks/><StatsRow/><TrustSection/><Footer setPage={setPage}/></>}
+      {page==="chefs"&&<><ChefsPage key={`chefs-${chefListKey}`} setPage={setPage} setSelectedChef={setSelectedChef}/><Footer setPage={setPage}/></>}
       {page==="chef-profile"&&<><ChefProfile chef={selectedChef} setPage={setPage} setBookingChef={setBookingChef}/><Footer setPage={setPage}/></>}
       {page==="booking"&&<><BookingPage chef={bookingChef||selectedChef} setPage={setPage} user={user} setShowAuth={setShowAuth}/><Footer setPage={setPage}/></>}
-      {page==="experiences"&&<div style={{maxWidth:1200,margin:"0 auto",padding:"44px 24px"}}><h1 style={{fontFamily:F.heading,fontSize:34,fontWeight:700,marginBottom:20}}>All Experiences</h1><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:18}}>{CHEFS_DATA.flatMap(c=>c.menus.map(m=>({menu:m,chef:c}))).map(({menu,chef})=><div key={menu+chef.id} className="card" style={{cursor:"pointer"}} onClick={()=>{setSelectedChef(chef);setPage("chef-profile");}}><div style={{height:110,background:`linear-gradient(135deg,${C.dark}22,${C.primary}22)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:40}}>🍽️</div><div style={{padding:14}}><div style={{fontFamily:F.heading,fontSize:14,fontWeight:600,marginBottom:5}}>{menu}</div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:11,color:C.muted}}>by {chef.alias}</span><Badge type={chef.type}/></div><div style={{fontSize:11,color:C.primary,fontWeight:600,marginTop:5}}>Price on Request</div></div></div>)}</div></div>}
+      {page==="experiences"&&<div style={{maxWidth:1200,margin:"0 auto",padding:"44px 24px"}}><h1 style={{fontFamily:F.heading,fontSize:34,fontWeight:700,marginBottom:20}}>All Experiences</h1><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:18}}>{getAllChefs().flatMap(c=>(c.menus||[]).map(m=>({menu:m,chef:c}))).map(({menu,chef})=><div key={menu+chef.id} className="card" style={{cursor:"pointer"}} onClick={()=>{setSelectedChef(chef);setPage("chef-profile");}}><div style={{height:110,background:`linear-gradient(135deg,${C.dark}22,${C.primary}22)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:40}}>🍽️</div><div style={{padding:14}}><div style={{fontFamily:F.heading,fontSize:14,fontWeight:600,marginBottom:5}}>{menu}</div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:11,color:C.muted}}>by {chef.alias}</span><Badge type={chef.type}/></div><div style={{fontSize:11,color:C.primary,fontWeight:600,marginTop:5}}>Price on Request</div></div></div>)}</div></div>}
       {page==="pricing"&&<><PricingPage/><Footer setPage={setPage}/></>}
       {page==="ai-menu"&&<><AIMenuPage/><Footer setPage={setPage}/></>}
       {page==="about"&&<div style={{maxWidth:760,margin:"0 auto",padding:"60px 24px",textAlign:"center"}}><h1 style={{fontFamily:F.heading,fontSize:36,fontWeight:700,marginBottom:16}}>About ChefAtHome</h1><p style={{color:C.muted,fontSize:15,lineHeight:1.8,marginBottom:22}}>Sri Lanka's first premium private chef booking platform, connecting food lovers with verified professional chefs for unforgettable home dining.</p><div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:13}}>{[["🎯","Our Mission","Make luxury private dining accessible to every Sri Lankan household"],["🔧","Our Process","Transparent proposal system — chef sets menu and price per event"],["💎","Our Values","Trust, quality, and extraordinary culinary experiences"]].map(([ic,t,d])=><div key={t} style={{background:"white",borderRadius:13,padding:22,border:`1px solid ${C.border}`}}><div style={{fontSize:28,marginBottom:9}}>{ic}</div><div style={{fontFamily:F.heading,fontSize:16,fontWeight:600,marginBottom:6}}>{t}</div><div style={{fontSize:12,color:C.muted,lineHeight:1.6}}>{d}</div></div>)}</div></div>}
