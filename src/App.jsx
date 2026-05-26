@@ -10,6 +10,8 @@ const K = {
   session:"cah_session", users:"cah_users", bookings:"cah_bookings",
   proposals:"cah_proposals", reviews:"cah_reviews", settings:"cah_settings",
   apps:"cah_chef_apps", chefFees:"cah_chef_fees", feeSugs:"cah_fee_sugs",
+  dynamicChefs:"cah_dynamic_chefs",
+  activityLog:"cah_activity_log",
 };
 const ls = {
   get: (k, fb=null) => { try { const v=localStorage.getItem(k); return v?JSON.parse(v):fb; } catch { return fb; } },
@@ -37,8 +39,13 @@ const loadApps      = ()  => ls.get(K.apps, []);
 const saveApps      = (a) => ls.set(K.apps, a);
 const loadChefFees  = ()  => ls.get(K.chefFees, {});
 const saveChefFees  = (f) => ls.set(K.chefFees, f);
-const loadFeeSugs   = ()  => ls.get(K.feeSugs, []);
-const saveFeeSugs   = (f) => ls.set(K.feeSugs, f);
+const loadFeeSugs      = ()  => ls.get(K.feeSugs, []);
+const saveFeeSugs      = (f) => ls.set(K.feeSugs, f);
+const loadDynamicChefs = ()  => ls.get(K.dynamicChefs, []);
+const saveDynamicChefs = (c) => ls.set(K.dynamicChefs, c);
+const addDynamicChef   = (c) => { const all=loadDynamicChefs(); if(!all.find(x=>x.email===c.email)){ all.push(c); saveDynamicChefs(all); } };
+const loadActivityLog  = ()  => ls.get(K.activityLog, []);
+const addActivityEvent = (ev) => { const all=loadActivityLog(); all.push({...ev, at:new Date().toISOString()}); if(all.length>500) all.splice(0, all.length-500); ls.set(K.activityLog, all); };
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
 const SB_URL = "https://fhvwafasykldkuaqrelz.supabase.co";
@@ -88,10 +95,16 @@ function AuthProvider({ children }) {
 
   const ensureStore = useCallback((email, name, role) => {
     const users = loadUsers();
-    if (!users.find(u => u.email === email)) {
+    const idx = users.findIndex(u => u.email === email);
+    if (idx < 0) {
       users.push({email, name, role, joinedAt:new Date().toISOString()});
-      saveUsers(users);
+    } else {
+      if (name && !users[idx].name) users[idx].name = name;
+      if (!users[idx].joinedAt) users[idx].joinedAt = new Date().toISOString();
+      if (role !== "super_admin" && !users[idx].role) users[idx].role = role;
     }
+    saveUsers(users);
+    window.dispatchEvent(new StorageEvent("storage", {key: "cah_users"}));
   }, []);
 
   useEffect(() => {
@@ -128,14 +141,21 @@ function AuthProvider({ children }) {
     if (!data.access_token) throw new Error(data.error_description||"Login failed");
     ls.set(K.session, data); setSession(data);
     const ud = await sb.getUser(data.access_token);
-    const u = formatUser(ud); setUser(u); ensureStore(u.email,u.name,u.role);
+    const u = formatUser(ud); setUser(u);
+    ensureStore(u.email, u.name, u.role); // ensureStore now dispatches storage event
+    addActivityEvent({type:"login", email:u.email, name:u.name});
     setLoginKey(k=>k+1); return u;
   };
   const signUp = async (email, password, name) => {
     const data = await sb.signUp(email, password, {full_name:name,role:"customer"});
     if (data.error) throw new Error(data.error.message||"Signup failed");
     const users = loadUsers();
-    if (!users.find(u=>u.email===email)) { users.push({email,name,role:"customer",joinedAt:new Date().toISOString()}); saveUsers(users); }
+    if (!users.find(u=>u.email===email)) {
+      users.push({email,name,role:"customer",joinedAt:new Date().toISOString()});
+      saveUsers(users);
+      addActivityEvent({type:"signup", email, name});
+      window.dispatchEvent(new StorageEvent("storage",{key:K.users}));
+    }
     if (data.access_token) { ls.set(K.session,data); setSession(data); const ud=await sb.getUser(data.access_token); setUser(formatUser(ud)); setLoginKey(k=>k+1); }
     return data;
   };
@@ -189,6 +209,19 @@ const CHEFS_DATA = [
   {id:5, alias:"Chef E", type:"standard", rating:4.6, reviews:54,  experience:"3 Years",   location:"Nugegoda",      specialties:["Sri Lankan","Vegetarian","South Indian"],       image:"CE", dinners:220,  badge:"Verified",  bio:"Passionate about traditional recipes. Specializes in vegetarian and healthy options.",                       menus:["Traditional Rice & Curry","South Indian Feast","Vegetarian Spread"],    startingFrom:6000},
   {id:6, alias:"Chef F", type:"standard", rating:4.8, reviews:61,  experience:"4 Years",   location:"Nawala",        specialties:["BBQ","Burgers","Grills"],                       image:"CF", dinners:290,  badge:"Verified",  bio:"BBQ and grill specialist who transforms backyards into restaurant-quality dining experiences.",                menus:["BBQ Party","Grill Night","Family BBQ"],                                 startingFrom:10000},
 ];
+
+// Merge static + approved dynamic chefs — always reads fresh from localStorage
+const getAllChefs = () => {
+  const dynamic = loadDynamicChefs();
+  const removedIds = ls.get("cah_removed_chefs", []);
+  const staticChefs = CHEFS_DATA.filter(c => !removedIds.includes(c.id));
+  const newChefs = dynamic.filter(d =>
+    !CHEFS_DATA.find(c => c.alias === d.alias) && !removedIds.includes(d.id)
+  );
+  return [...staticChefs, ...newChefs];
+};
+// Alias for clarity — same function, guarantees fresh read
+const getActiveChefs = getAllChefs;
 
 const EXPERIENCES = [
   {name:"Biriyani Feast",   rating:4.9, count:120, chef:"Chef D", type:"standard", emoji:"🍛"},
@@ -555,7 +588,9 @@ function ChefCard({chef,onClick}){
 function ChefsPage({setPage,setSelectedChef}){
   const [filter,setFilter]=useState("all");
   const [search,setSearch]=useState("");
-  const filtered=CHEFS_DATA.filter(c=>(filter==="all"||c.type===filter)&&(c.alias.toLowerCase().includes(search.toLowerCase())||c.specialties.some(s=>s.toLowerCase().includes(search.toLowerCase()))));
+  // Always read fresh — getAllChefs reads localStorage directly
+  const allChefs = getAllChefs();
+  const filtered=allChefs.filter(c=>(filter==="all"||c.type===filter)&&(c.alias.toLowerCase().includes(search.toLowerCase())||c.specialties.some(s=>s.toLowerCase().includes(search.toLowerCase()))));
   return(<div style={{maxWidth:1200,margin:"0 auto",padding:"44px 24px"}}>
     <div style={{marginBottom:28}}><div style={{color:C.primary,fontSize:13,fontWeight:600,letterSpacing:1,marginBottom:7}}>✦ OUR CHEFS</div><h1 style={{fontFamily:F.heading,fontSize:36,fontWeight:700,marginBottom:8}}>Find Your Perfect Chef</h1><p style={{color:C.muted,fontSize:15}}>Browse verified chefs · Price confirmed after chef sends proposal</p></div>
     <div style={{display:"flex",gap:11,marginBottom:20,flexWrap:"wrap"}}>
@@ -563,7 +598,7 @@ function ChefsPage({setPage,setSelectedChef}){
       <div style={{display:"flex",gap:7}}>{["all","premium","standard"].map(f=><button key={f} className={`tab ${filter===f?"active":""}`} onClick={()=>setFilter(f)}>{f==="all"?"All":f==="premium"?"Premium":"Standard"}</button>)}</div>
     </div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:20}}>
-      {filtered.map(c=><ChefCard key={c.id} chef={c} onClick={()=>{setSelectedChef(c);setPage("chef-profile");}}/>)}
+      {filtered.length===0?<div style={{gridColumn:"1/-1",textAlign:"center",padding:48,color:C.muted}}>No chefs found matching your search.</div>:filtered.map(c=><ChefCard key={c.id} chef={c} onClick={()=>{setSelectedChef(c);setPage("chef-profile");}}/>)}
     </div>
   </div>);
 }
@@ -995,9 +1030,12 @@ function ProposalPayModal({booking,onSuccess,onClose}) {
 // ─── Chef Panel ───────────────────────────────────────────────────────────────
 function ChefPanel({user,loginKey}) {
   const [tab,setTab]=useState("overview");
-  const chefData=CHEFS_DATA.find(c=>c.alias===user?.name);
+  // Look up chef by email (dynamic chefs) or by name (static chefs)
+  const allChefs = getAllChefs();
+  const dynamicChefs = loadDynamicChefs();
+  const chefData = dynamicChefs.find(c=>c.email===user?.email) || allChefs.find(c=>c.alias===user?.name) || null;
   // For demo: chef sees all bookings with their chefId OR show by alias
-  const myBookings=loadBookings().filter(b=>b.chefId===chefData?.id||b.chefAlias===user?.name);
+  const myBookings=loadBookings().filter(b=>b.chefId===chefData?.id||b.chefAlias===user?.name||b.chefAlias===chefData?.alias);
   const pendingProposalBookings=myBookings.filter(b=>b.status==="pending_proposal");
   const settings=loadSettings();
 
@@ -1020,6 +1058,12 @@ function ChefPanel({user,loginKey}) {
           <div>
             <h2 style={{fontFamily:F.heading,fontSize:23,marginBottom:4}}>Welcome, {user?.name?.split(" ")[0]||"Chef"} 👋</h2>
             <p style={{color:C.muted,marginBottom:20}}>Your bookings and proposal status.</p>
+            {chefData?.isDynamic&&chefData.startingFrom===0&&(
+              <div style={{background:C.successBg,border:`1px solid ${C.success}44`,borderRadius:11,padding:"13px 17px",marginBottom:16}}>
+                <div style={{fontWeight:700,color:C.success,marginBottom:4}}>🎉 Your chef profile is now live!</div>
+                <div style={{fontSize:13,color:C.success}}>Customers can now find and book you. Ask the super admin to set your starting price so it appears on your card.</div>
+              </div>
+            )}
             {pendingProposalBookings.length>0&&(
               <div style={{background:C.warnBg,border:`1px solid ${C.warn}44`,borderRadius:11,padding:"12px 17px",marginBottom:16,cursor:"pointer",display:"flex",alignItems:"center",gap:10}} onClick={()=>setTab("pending")}>
                 <span>⚠️</span><span style={{fontWeight:700,color:C.warn}}>{pendingProposalBookings.length} booking{pendingProposalBookings.length>1?"s":""} need{pendingProposalBookings.length===1?"s":""} your proposal</span><span style={{marginLeft:"auto",color:C.warn}}>Create now →</span>
@@ -1133,7 +1177,9 @@ function ChefProposalList({bookings,onRefresh}){
 }
 
 function ChefMyProposals({user}){
-  const myProps=loadProposals().filter(p=>p.chefAlias===user?.name||p.chefId===CHEFS_DATA.find(c=>c.alias===user?.name)?.id);
+  const dynamicChef=loadDynamicChefs().find(c=>c.email===user?.email);
+  const chefAlias=dynamicChef?.alias||user?.name;
+  const myProps=loadProposals().filter(p=>p.chefAlias===chefAlias||p.chefAlias===user?.name||p.chefId===getAllChefs().find(c=>c.alias===user?.name)?.id);
   return(<div><h2 style={{fontFamily:F.heading,fontSize:21,marginBottom:18}}>My Submitted Proposals</h2>{myProps.length===0?<EmptyState icon="📋" text="No proposals submitted yet."/>:myProps.slice().reverse().map(p=>{const sc={pending_review:{bg:C.warnBg,c:C.warn,l:"Under Admin Review"},accepted:{bg:C.successBg,c:C.success,l:"Accepted ✓"},rejected:{bg:C.dangerBg,c:C.danger,l:"Rejected"}}[p.status]||{bg:C.surface,c:C.muted,l:p.status};return(<div key={p.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:18,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}><div><div style={{fontWeight:700}}>Booking #{p.bookingId}</div><div style={{fontSize:11,color:C.muted}}>{new Date(p.submittedAt).toLocaleDateString()}</div></div><span style={{background:sc.bg,color:sc.c,padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:600}}>{sc.l}</span></div><div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>{(p.menuItems||[]).map((m,i)=><span key={i} style={{background:C.primaryLight,color:C.primary,padding:"3px 9px",borderRadius:20,fontSize:12}}>🍽 {m.name}</span>)}</div><div style={{fontWeight:700,fontSize:14,color:C.primary}}>{fmtLKR(p.proposedPrice)}</div>{p.notes&&<div style={{fontSize:12,color:C.muted,marginTop:4}}>Note: {p.notes}</div>}</div>);})}</div>);
 }
 function ChefAvailabilityTab(){const [avail,setAvail]=useState({Mon:true,Tue:true,Wed:false,Thu:true,Fri:true,Sat:true,Sun:false});return(<div><h2 style={{fontFamily:F.heading,fontSize:21,marginBottom:16}}>Availability</h2><div style={{background:"white",borderRadius:13,border:`1px solid ${C.border}`,padding:22}}><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:9}}>{Object.entries(avail).map(([day,on])=><div key={day} onClick={()=>setAvail(a=>({...a,[day]:!a[day]}))} style={{textAlign:"center",padding:"12px 5px",borderRadius:11,border:`2px solid ${on?C.primary:C.border}`,background:on?C.primaryLight:"white",cursor:"pointer",transition:"all .2s"}}><div style={{fontSize:11,fontWeight:700,color:on?C.primary:C.muted,textTransform:"uppercase"}}>{day}</div><div style={{fontSize:17,marginTop:5}}>{on?"✅":"❌"}</div></div>)}</div><button className="btn-primary" style={{marginTop:16,padding:"9px 22px"}} onClick={()=>alert("✅ Saved!")}>Save</button></div></div>);}
@@ -1147,16 +1193,24 @@ function ChefJoinRequestForm({user,onSubmit,onCancel}) {
   const [form,setForm]=useState({fullName:user?.name||"",email:user?.email||"",phone:"",nic:"",address:"",city:"",district:"",experience:"",specialties:"",chefType:"standard",bio:"",suggestAllIn:"",suggestCook:"",nicFile:null,policeFile:null,photoFile:null,certFile:null});
   const [errors,setErrors]=useState({});
   const upd=(k,v)=>setForm(f=>({...f,[k]:v}));
-  const handleFile=(k,e)=>{const f=e.target.files[0];if(f)upd(k,f.name);};
+  const handleFile=(k,e)=>{
+    const f=e.target.files[0];
+    if(!f) return;
+    const reader=new FileReader();
+    reader.onload=(ev)=>{
+      upd(k,{name:f.name,type:f.type,data:ev.target.result});
+    };
+    reader.readAsDataURL(f);
+  };
   const validate=()=>{
     const e={};
     if(step===1){if(!form.fullName.trim())e.fullName="Required";if(!form.nic.trim())e.nic="Required";if(!validatePhone(form.phone))e.phone="Enter +94 followed by 9 digits";if(!form.bio.trim())e.bio="Required";}
     if(step===2){if(!form.address.trim())e.address="Required";if(!form.city.trim())e.city="Required";if(!form.district)e.district="Required";if(!form.experience)e.experience="Required";if(!form.specialties.trim())e.specialties="Required";}
-    if(step===3){if(!form.nicFile)e.nicFile="Required";if(!form.policeFile)e.policeFile="Required";if(!form.photoFile)e.photoFile="Required";}
+    if(step===3){if(!form.nicFile?.data)e.nicFile="Required";if(!form.policeFile?.data)e.policeFile="Required";if(!form.photoFile?.data)e.photoFile="Required";}
     setErrors(e);return Object.keys(e).length===0;
   };
   const DISTRICTS=["Colombo","Gampaha","Kalutara","Kandy","Matale","Nuwara Eliya","Galle","Matara","Hambantota","Jaffna","Kilinochchi","Mannar","Vavuniya","Batticaloa","Ampara","Trincomalee","Kurunegala","Puttalam","Anuradhapura","Polonnaruwa","Badulla","Monaragala","Ratnapura","Kegalle"];
-  const submit=()=>{const apps=loadApps();apps.push({id:genId(),userId:user?.id,email:user?.email,...form,submittedAt:new Date().toISOString(),status:"pending"});saveApps(apps);onSubmit();};
+  const submit=()=>{const apps=loadApps();apps.push({id:genId(),userId:user?.id,email:user?.email,...form,submittedAt:new Date().toISOString(),status:"pending"});saveApps(apps);window.dispatchEvent(new StorageEvent("storage",{key:K.apps}));onSubmit();};
   const STEPS=["Personal","Address & Skills","Documents","Review"];
   return(<div style={{background:"white",borderRadius:18,border:`1px solid ${C.border}`,padding:28,maxWidth:640,margin:"0 auto"}}>
     <button onClick={onCancel} style={{background:"none",border:"none",color:C.muted,fontSize:13,marginBottom:11,cursor:"pointer"}}>← Back</button>
@@ -1181,14 +1235,14 @@ function ChefJoinRequestForm({user,onSubmit,onCancel}) {
         <div key={doc.k}><RL req={doc.req}>{doc.icon} {doc.label}</RL><p style={{fontSize:11,color:C.muted,marginBottom:5}}>{doc.desc}</p>
         <label className={`upload-zone ${form[doc.k]?"has-file":""}`} style={{display:"block",cursor:"pointer"}}>
           <input type="file" style={{display:"none"}} accept={doc.types} onChange={e=>handleFile(doc.k,e)}/>
-          {form[doc.k]?<div><div style={{fontSize:17,marginBottom:3}}>✅</div><div style={{fontSize:12,fontWeight:600,color:C.success}}>{form[doc.k]}</div></div>:<div><div style={{fontSize:24,marginBottom:3}}>📎</div><div style={{fontWeight:600,fontSize:12}}>Click to upload · Max 10MB</div></div>}
+          {form[doc.k]?<div><div style={{fontSize:17,marginBottom:3}}>✅</div><div style={{fontSize:12,fontWeight:600,color:C.success}}>{form[doc.k]?.name||form[doc.k]}</div></div>:<div><div style={{fontSize:24,marginBottom:3}}>📎</div><div style={{fontWeight:600,fontSize:12}}>Click to upload · Max 10MB</div></div>}
         </label>{errors[doc.k]&&<span style={{fontSize:11,color:C.danger}}>{errors[doc.k]}</span>}
       </div>))}
     </div>}
     {step===4&&<div className="fade-up">
       <h3 style={{fontFamily:F.heading,fontSize:17,marginBottom:12}}>Review Application</h3>
       <div style={{background:C.surface,borderRadius:11,padding:15,marginBottom:14}}>{[["Name",form.fullName],["NIC",form.nic],["Phone",form.phone],["Type",form.chefType==="premium"?"Premium":"Standard"],["Address",`${form.address}, ${form.city}, ${form.district}`],["Experience",form.experience]].filter(([k,v])=>v).map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${C.border}`,fontSize:12}}><span style={{color:C.muted}}>{k}</span><span style={{fontWeight:600,maxWidth:"55%",textAlign:"right"}}>{v}</span></div>)}</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>{[["🪪 NIC",form.nicFile],["🚔 Police",form.policeFile],["📸 Photo",form.photoFile],["🎓 Certs",form.certFile]].map(([l,f])=><div key={l} style={{background:f?C.successBg:C.surface,borderRadius:7,padding:"7px 10px",fontSize:11,border:`1px solid ${f?C.success+"44":C.border}`}}><div style={{color:C.muted}}>{l}</div><div style={{fontWeight:700,color:f?C.success:C.muted}}>{f?"✓ Uploaded":"– Not uploaded"}</div></div>)}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>{[["🪪 NIC",form.nicFile],["🚔 Police",form.policeFile],["📸 Photo",form.photoFile],["🎓 Certs",form.certFile]].map(([l,f])=><div key={l} style={{background:f?.data?C.successBg:C.surface,borderRadius:7,padding:"7px 10px",fontSize:11,border:`1px solid ${f?.data?C.success+"44":C.border}`}}><div style={{color:C.muted}}>{l}</div><div style={{fontWeight:700,color:f?.data?C.success:C.muted}}>{f?.data?"✓ Uploaded":"– Not uploaded"}</div></div>)}</div>
       <div style={{background:C.warnBg,borderRadius:9,padding:9,fontSize:12,color:C.warn,marginBottom:13}}>⏳ Super admin reviews within 2–3 business days.</div>
       <button className="btn-primary" style={{width:"100%",padding:12,fontSize:14}} onClick={submit}>Submit Application →</button>
     </div>}
@@ -1392,14 +1446,17 @@ function MaintenanceAdminPanel({user,loginKey}) {
         {tab==="chefs"&&(
           <div>
             <h3 style={{fontFamily:F.heading,fontSize:18,marginBottom:18}}>Chef Activity</h3>
-            {CHEFS_DATA.map(c=>{
+            {getAllChefs().map(c=>{
               const chefBookings=allBookings.filter(b=>b.chefAlias===c.alias);
               const chefProposals=allProposals.filter(p=>p.chefAlias===c.alias);
               return(
                 <div key={c.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:18,marginBottom:10,display:"flex",alignItems:"center",gap:14,justifyContent:"space-between"}}>
                   <div style={{display:"flex",alignItems:"center",gap:11}}>
-                    <Avatar initials={c.image} size={38} color={c.type==="premium"?"#B45309":C.primary}/>
-                    <div><div style={{fontWeight:600,fontSize:14}}>{c.alias}</div><div style={{fontSize:12,color:C.muted}}>{c.location} · {c.type==="premium"?"Premium":"Standard"}</div></div>
+                    <Avatar initials={c.image||c.alias?.slice(0,2)} size={38} color={c.type==="premium"?"#B45309":C.primary}/>
+                    <div>
+                      <div style={{fontWeight:600,fontSize:14}}>{c.alias}</div>
+                      <div style={{fontSize:12,color:C.muted}}>{c.location} · {c.type==="premium"?"Premium":"Standard"}{c.isDynamic&&<span style={{marginLeft:7,background:C.successBg,color:C.success,padding:"1px 7px",borderRadius:10,fontSize:10,fontWeight:700}}>NEW</span>}</div>
+                    </div>
                   </div>
                   <div style={{display:"flex",gap:18}}>
                     <div style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Bookings</div><div style={{fontWeight:700,color:C.primary}}>{chefBookings.length}</div></div>
@@ -1421,7 +1478,7 @@ function SuperAdminPanel({loginKey}) {
   const {setRole}=useAuth();
   const [tab,setTab]=useState("dashboard");
   const [settings,setSettings]=useState(loadSettings);
-  const [pendingApps,setPendingApps]=useState(()=>loadApps().filter(a=>a.status==="pending"));
+  const [tick,setTick]=useState(0); const pendingApps=loadApps().filter(a=>a.status==="pending"); const setPendingApps=()=>setTick(t=>t+1);
   const [feeSugs,setFeeSugs]=useState(()=>loadFeeSugs().filter(s=>s.status==="pending"));
   const [allBookings,setAllBookings]=useState(loadBookings);
   const [allProposals,setAllProposals]=useState(loadProposals);
@@ -1451,6 +1508,27 @@ function SuperAdminPanel({loginKey}) {
     setRemovedChefIds(ls.get("cah_removed_chefs",[]));
   };
 
+  useEffect(()=>{
+    const doRefresh=()=>{
+      setAllBookings(loadBookings());
+      setAllProposals(loadProposals());
+      const apps=loadApps();
+      setPendingApps(apps.filter(a=>a.status==="pending"));
+      setFeeSugs(loadFeeSugs().filter(s=>s.status==="pending"));
+      setChefFeeMap(loadChefFees());
+      const stored=loadUsers();
+      setAllUsers([...stored]);
+      const r={};stored.forEach(u=>{if(u.role)r[u.email]=u.role;});
+      setUserRoles(r);
+      setRemovedChefIds(ls.get("cah_removed_chefs",[]));
+    };
+    const interval=setInterval(doRefresh,3000);
+    // Listen for storage writes from any tab (login, signup, role changes)
+    const onStorage=(e)=>{if(!e||!e.key||[K.apps,K.users,K.bookings,K.proposals,"cah_dynamic_chefs"].includes(e.key)||e.key===null)doRefresh();};
+    window.addEventListener("storage",onStorage);
+    return()=>{clearInterval(interval);window.removeEventListener("storage",onStorage);};
+  },[]);
+
   const removeUserRole=(email)=>{
     setRole(email,"customer");
     setUserRoles(r=>({...r,[email]:"customer"}));
@@ -1464,11 +1542,17 @@ function SuperAdminPanel({loginKey}) {
     const updated=[...removedChefIds,chefId];
     ls.set("cah_removed_chefs",updated);
     setRemovedChefIds(updated);
+    // Remove from dynamic chefs store if applicable
+    const dynamic=loadDynamicChefs().filter(c=>c.id!==chefId);
+    saveDynamicChefs(dynamic);
     // Also demote any user with that alias
     const users=loadUsers();
     const i=users.findIndex(u=>u.name===chefAlias||u.email===chefAlias);
     if(i>=0){users[i].role="customer";saveUsers(users);}
     setAllUsers(loadAllUsers());
+    // Notify all open tabs/panels
+    window.dispatchEvent(new StorageEvent("storage",{key:"cah_removed_chefs"}));
+    refresh();
   };
   const setUserRole=(email,newRole)=>{
     setRole(email,newRole);
@@ -1479,10 +1563,40 @@ function SuperAdminPanel({loginKey}) {
     setAllUsers(loadAllUsers());
   };
 
-  const approveApp=(id)=>{const apps=loadApps();const i=apps.findIndex(a=>a.id===id);if(i>=0){apps[i].status="approved";saveApps(apps);setRole(apps[i].email,"chef");}setPendingApps(p=>p.filter(a=>a.id!==id));setViewApp(null);};
+  const approveApp=(id)=>{
+    const apps=loadApps();
+    const i=apps.findIndex(a=>a.id===id);
+    if(i>=0){
+      apps[i].status="approved";
+      saveApps(apps);
+      setRole(apps[i].email,"chef");
+      // Create a dynamic chef profile so they appear in the public chef listing
+      const app=apps[i];
+      const specialties=(app.specialties||"").split(",").map(s=>s.trim()).filter(Boolean);
+      const initials=app.fullName.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase()||"CH";
+      const newId=`dyn_${app.id}`;
+      const chefProfile={
+        id:newId, alias:app.fullName, email:app.email,
+        type:app.chefType||"standard",
+        rating:0, reviews:0, experience:app.experience||"",
+        location:app.city||app.district||"Sri Lanka",
+        specialties:specialties.length?specialties:["Sri Lankan"],
+        image:initials, dinners:0,
+        badge:app.chefType==="premium"?"Premium":"Verified",
+        bio:app.bio||"Verified Chef on ChefAtHome.",
+        menus:specialties.slice(0,3).map(s=>`${s} Speciality`)||["Custom Menu"],
+        startingFrom:Number(app.suggestAllIn)||0,
+        isDynamic:true, approvedAt:new Date().toISOString(),
+      };
+      addDynamicChef(chefProfile);
+    }
+    setPendingApps(p=>p.filter(a=>a.id!==id));
+    setViewApp(null);
+    refresh();
+  };
   const rejectApp=(id)=>{const apps=loadApps();const i=apps.findIndex(a=>a.id===id);if(i>=0){apps[i].status="rejected";saveApps(apps);}setPendingApps(p=>p.filter(a=>a.id!==id));setViewApp(null);};
   const setChefStarting=(chefId,data)=>{const fees=loadChefFees();fees[chefId]={...fees[chefId],...data};saveChefFees(fees);setChefFeeMap({...fees});setEditFee(null);};
-  const approveSug=(sug)=>{const chef=CHEFS_DATA.find(c=>c.alias===sug.chefAlias);if(chef){const fees=loadChefFees();fees[chef.id]={...fees[chef.id],startingFrom:sug.suggestAllIn,cookStartingFrom:sug.suggestCook};saveChefFees(fees);}const all=loadFeeSugs().map(s=>s.id===sug.id?{...s,status:"approved"}:s);saveFeeSugs(all);setFeeSugs(p=>p.filter(s=>s.id!==sug.id));};
+  const approveSug=(sug)=>{const chef=getAllChefs().find(c=>c.alias===sug.chefAlias);if(chef){const fees=loadChefFees();fees[chef.id]={...fees[chef.id],startingFrom:sug.suggestAllIn,cookStartingFrom:sug.suggestCook};saveChefFees(fees);}const all=loadFeeSugs().map(s=>s.id===sug.id?{...s,status:"approved"}:s);saveFeeSugs(all);setFeeSugs(p=>p.filter(s=>s.id!==sug.id));};
 
   const totalRevenue=allBookings.reduce((s,b)=>s+(b.amount||0),0);
   const allCustomers=[...new Set(allBookings.map(b=>b.customerEmail))];
@@ -1500,10 +1614,26 @@ function SuperAdminPanel({loginKey}) {
           ))}
         </div>
         {viewApp.bio&&<div style={{marginBottom:12}}><label className="label">Bio</label><p style={{fontSize:13,color:C.muted,background:C.surface,borderRadius:8,padding:10}}>{viewApp.bio}</p></div>}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:13}}>
-          {[["🪪 NIC",viewApp.nicFile],["🚔 Police",viewApp.policeFile],["📸 Photo",viewApp.photoFile],["🎓 Certs",viewApp.certFile]].map(([l,f])=>(
-            <div key={l} style={{background:f?C.successBg:C.dangerBg,borderRadius:7,padding:"7px 11px",display:"flex",justifyContent:"space-between",fontSize:12}}><span>{l}</span><span style={{fontWeight:700,color:f?C.success:C.danger}}>{f?"✓":"✗"}</span></div>
-          ))}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:13}}>
+          {[["🪪 NIC",viewApp.nicFile],["🚔 Police",viewApp.policeFile],["📸 Photo",viewApp.photoFile],["🎓 Certs",viewApp.certFile]].map(([l,f])=>{
+            const hasFile=f?.data||typeof f==="string";
+            const fileData=f?.data||null;
+            const fileType=f?.type||"";
+            const fileName=f?.name||f||"";
+            const isImage=fileType.startsWith("image/");
+            const isPDF=fileType==="application/pdf"||fileName.endsWith(".pdf");
+            return(
+              <div key={l} style={{background:hasFile?C.successBg:C.dangerBg,borderRadius:9,padding:"10px 12px",fontSize:12,border:`1px solid ${hasFile?C.success+"44":C.danger+"44"}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:hasFile&&fileData?8:0}}>
+                  <span style={{fontWeight:700}}>{l}</span>
+                  <span style={{fontWeight:700,color:hasFile?C.success:C.danger}}>{hasFile?"✓":"✗"}</span>
+                </div>
+                {hasFile&&fileData&&isImage&&<img src={fileData} alt={l} style={{width:"100%",borderRadius:6,maxHeight:120,objectFit:"cover",marginBottom:5}}/>}
+                {hasFile&&fileData&&isPDF&&<a href={fileData} target="_blank" rel="noreferrer" style={{display:"block",background:C.info,color:"white",textAlign:"center",padding:"5px 10px",borderRadius:6,fontSize:11,fontWeight:700,textDecoration:"none",marginBottom:4}}>📄 View PDF</a>}
+                {hasFile&&fileName&&<div style={{fontSize:10,color:C.muted,wordBreak:"break-all"}}>{fileName}</div>}
+              </div>
+            );
+          })}
         </div>
         {(viewApp.suggestAllIn||viewApp.suggestCook)&&<div style={{background:C.infoBg,borderRadius:9,padding:9,marginBottom:11,fontSize:12,color:C.info}}>💡 Suggested — All Inclusive: {fmtLKR(viewApp.suggestAllIn||0)} · Cook-at-Home: {fmtLKR(viewApp.suggestCook||0)}</div>}
         <div style={{display:"flex",gap:9}}>
@@ -1544,7 +1674,7 @@ function SuperAdminPanel({loginKey}) {
           <div style={{fontFamily:F.heading,fontSize:15,color:"white",fontWeight:700}}>🍽️ ChefAtHome</div>
           <div style={{color:C.primary,fontSize:11,marginTop:2}}>⚡ Super Admin Panel</div>
         </div>
-        {[["dashboard","📊","Dashboard"],["chef-apps","📋","Chef Applications",pendingApps.length],["maint-admins","🔧","Maintenance Admins"],["chefs","👨‍🍳","Chef Starting Prices"],["users","👥","All Users"],["bookings","📅","All Bookings"],["payments","💳","Payments"],["fee-sugs","💡","Fee Suggestions",feeSugs.length],["proposals","📝","All Proposals"],["settings","⚙️","Settings"]].map(([id,ic,l,cnt])=>(
+        {[["dashboard","📊","Dashboard"],["chef-apps","📋","Chef Applications",pendingApps.length],["maint-admins","🔧","Maintenance Admins"],["chefs","👨‍🍳","Chef Starting Prices"],["users","👥","All Users"],["bookings","📅","All Bookings"],["payments","💳","Payments"],["fee-sugs","💡","Fee Suggestions",feeSugs.length],["proposals","📝","All Proposals"],["activity","🕐","Login History"],["settings","⚙️","Settings"]].map(([id,ic,l,cnt])=>(
           <div key={id} className={`sidebar-link ${tab===id?"active":""}`} onClick={()=>{setTab(id);refresh();}} style={{position:"relative"}}>
             <span>{ic}</span><span style={{fontSize:13}}>{l}</span>
             {cnt>0&&<span style={{marginLeft:"auto",background:C.danger,color:"white",borderRadius:10,fontSize:10,fontWeight:700,padding:"2px 6px"}}>{cnt}</span>}
@@ -1589,9 +1719,10 @@ function SuperAdminPanel({loginKey}) {
                   <span style={{background:C.warnBg,color:C.warn,padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:700}}>⏳ Pending</span>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:7,marginBottom:11}}>
-                  {[["🪪 NIC",app.nicFile],["🚔 Police",app.policeFile],["📸 Photo",app.photoFile],["🎓 Certs",app.certFile]].map(([l,f])=>(
-                    <div key={l} style={{background:f?C.successBg:C.surface,borderRadius:7,padding:"5px 9px",fontSize:11,textAlign:"center",border:`1px solid ${f?C.success+"44":C.border}`}}><div>{l}</div><div style={{fontWeight:700,color:f?C.success:C.muted}}>{f?"✓":"–"}</div></div>
-                  ))}
+                  {[["🪪 NIC",app.nicFile],["🚔 Police",app.policeFile],["📸 Photo",app.photoFile],["🎓 Certs",app.certFile]].map(([l,f])=>{
+                    const has=f?.data||typeof f==="string";
+                    return(<div key={l} style={{background:has?C.successBg:C.surface,borderRadius:7,padding:"5px 9px",fontSize:11,textAlign:"center",border:`1px solid ${has?C.success+"44":C.border}`}}><div>{l}</div><div style={{fontWeight:700,color:has?C.success:C.muted}}>{has?"✓":"–"}</div></div>);
+                  })}
                 </div>
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>setViewApp(app)} style={{background:C.infoBg,color:C.info,padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>📄 Review</button>
@@ -1654,25 +1785,30 @@ function SuperAdminPanel({loginKey}) {
           <div>
             <h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:6}}>Chef Starting Prices</h2>
             <p style={{color:C.muted,marginBottom:18,fontSize:13}}>Set the "Starting from" price displayed on each chef's card. Actual price is set per booking via proposal.</p>
-            {CHEFS_DATA.filter(c=>!removedChefIds.includes(c.id)).map(c=>{
+            {getAllChefs().map(c=>{
               const fee=chefFeeMap[c.id];
               return(
-                <div key={c.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:17,marginBottom:10,display:"flex",alignItems:"center",gap:13,justifyContent:"space-between"}}>
+                <div key={c.id} style={{background:"white",borderRadius:11,border:`1px solid ${c.isDynamic?C.success:C.border}`,padding:17,marginBottom:10,display:"flex",alignItems:"center",gap:13,justifyContent:"space-between"}}>
                   <div style={{display:"flex",alignItems:"center",gap:11}}>
-                    <Avatar initials={c.image} size={38} color={c.type==="premium"?"#B45309":C.primary}/>
-                    <div><div style={{fontWeight:600,fontSize:14}}>{c.alias}</div><div style={{fontSize:11,color:C.muted}}>{c.type==="premium"?"Premium":"Standard"} · {c.location}</div></div>
+                    <Avatar initials={c.image||c.alias?.slice(0,2)} size={38} color={c.type==="premium"?"#B45309":C.primary}/>
+                    <div>
+                      <div style={{fontWeight:600,fontSize:14}}>{c.alias}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{c.type==="premium"?"Premium":"Standard"} · {c.location}
+                        {c.isDynamic&&<span style={{marginLeft:7,background:C.successBg,color:C.success,padding:"1px 7px",borderRadius:10,fontSize:10,fontWeight:700}}>NEW ✓ Approved</span>}
+                      </div>
+                    </div>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:11}}>
-                    <div style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Starting From</div><div style={{fontWeight:700,color:C.primary,fontSize:14}}>{fee?fmtLKR(fee.startingFrom||c.startingFrom):fmtLKR(c.startingFrom)}</div></div>
-                    <button onClick={()=>{setEditFee(c);setFeeForm({startingFrom:fee?.startingFrom||c.startingFrom,extraPerGuest:fee?.extraPerGuest||2000});}} style={{background:C.infoBg,color:C.info,padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✏️ Edit Price</button>
-                    <button onClick={()=>removeChef(c.id,c.alias)} style={{background:C.dangerBg,color:C.danger,padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>🗑 Remove Chef</button>
+                    <div style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Starting From</div><div style={{fontWeight:700,color:C.primary,fontSize:14}}>{fee?fmtLKR(fee.startingFrom||c.startingFrom):fmtLKR(c.startingFrom||0)}</div></div>
+                    <button onClick={()=>{setEditFee(c);setFeeForm({startingFrom:fee?.startingFrom||c.startingFrom||0,extraPerGuest:fee?.extraPerGuest||2000});}} style={{background:C.infoBg,color:C.info,padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✏️ Edit Price</button>
+                    <button onClick={()=>removeChef(c.id,c.alias)} style={{background:C.dangerBg,color:C.danger,padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>🗑 Remove</button>
                   </div>
                 </div>
               );
             })}
             {removedChefIds.length>0&&(
               <div style={{marginTop:16,padding:"10px 14px",background:C.surface,borderRadius:9,border:`1px solid ${C.border}`,fontSize:12,color:C.muted}}>
-                {removedChefIds.length} chef(s) removed. <span style={{color:C.primary,cursor:"pointer",fontWeight:600}} onClick={()=>{ls.set("cah_removed_chefs",[]);setRemovedChefIds([]);}}>Restore all</span>
+                {removedChefIds.length} chef(s) removed. <span style={{color:C.primary,cursor:"pointer",fontWeight:600}} onClick={()=>{ls.set("cah_removed_chefs",[]);setRemovedChefIds([]);window.dispatchEvent(new StorageEvent("storage",{key:"cah_removed_chefs"}));}}>Restore all</span>
               </div>
             )}
           </div>
@@ -1680,31 +1816,148 @@ function SuperAdminPanel({loginKey}) {
 
         {tab==="users"&&(
           <div>
-            <h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:18}}>All Users</h2>
-            {allUsers.map((u,i)=>{const currentRole=getRoleDisplay(u.email);const rc=ROLE_COLORS[currentRole]||ROLE_COLORS.customer;return(
-              <div key={u.email} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:15,marginBottom:9,display:"flex",alignItems:"center",gap:11,justifyContent:"space-between"}}>
-                <div style={{display:"flex",gap:10,alignItems:"center"}}><Avatar initials={(u.name||"U").split(" ").map(n=>n[0]).join("").slice(0,2)} size={34} color={[C.primary,C.info,C.success,C.warn][i%4]}/><div><div style={{fontWeight:600,fontSize:13}}>{u.name||u.email}</div><div style={{fontSize:11,color:C.muted}}>{u.email}</div></div></div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+              <h2 style={{fontFamily:F.heading,fontSize:20}}>All Users</h2>
+              <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                <span style={{fontSize:13,color:C.muted}}>{allUsers.length} registered</span>
+                <button onClick={()=>setTab("activity")} style={{background:C.infoBg,color:C.info,padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>🕐 View Login History</button>
+              </div>
+            </div>
+            {/* Summary stats */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:11,marginBottom:20}}>
+              <MetricCard label="Total Users" value={allUsers.length} color={C.primary}/>
+              <MetricCard label="Customers" value={allUsers.filter(u=>getRoleDisplay(u.email)==="customer").length} color={C.info}/>
+              <MetricCard label="Chefs" value={allUsers.filter(u=>getRoleDisplay(u.email)==="chef").length} color={C.success}/>
+              <MetricCard label="Admins" value={allUsers.filter(u=>["maintenance_admin","super_admin"].includes(getRoleDisplay(u.email))).length} color={C.purple}/>
+            </div>
+            {allUsers.length===0?<EmptyState icon="👥" text="No users registered yet."/>:allUsers.map((u,i)=>{
+              const currentRole=getRoleDisplay(u.email);
+              const rc=ROLE_COLORS[currentRole]||ROLE_COLORS.customer;
+              const log=loadActivityLog().filter(e=>e.email===u.email);
+              const lastLogin=log.filter(e=>e.type==="login").slice(-1)[0];
+              const loginCount=log.filter(e=>e.type==="login").length;
+              const userBookings=allBookings.filter(b=>b.customerEmail===u.email);
+              return(
+              <div key={u.email} style={{background:"white",borderRadius:12,border:`1px solid ${C.border}`,padding:16,marginBottom:10}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                  <div style={{display:"flex",gap:11,alignItems:"center"}}>
+                    <Avatar initials={(u.name||"U").split(" ").map(n=>n[0]).join("").slice(0,2)} size={38} color={[C.primary,C.info,C.success,C.warn,C.purple][i%5]}/>
+                    <div>
+                      <div style={{fontWeight:700,fontSize:14}}>{u.name||"—"}</div>
+                      <div style={{fontSize:12,color:C.muted}}>{u.email}</div>
+                    </div>
+                  </div>
                   <div style={{display:"flex",alignItems:"center",gap:9}}>
-                  <span style={{padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:700,background:rc.bg,color:rc.c}}>{rc.l}</span>
-                  {currentRole!=="super_admin"&&(
-                    <select value={currentRole} onChange={e=>setUserRole(u.email,e.target.value)} style={{fontSize:12,padding:"4px 8px",borderRadius:6,border:`1px solid ${C.border}`,cursor:"pointer"}}>
-                      <option value="customer">Customer</option>
-                      <option value="chef">Chef</option>
-                      <option value="maintenance_admin">Maintenance Admin</option>
-                    </select>
-                  )}
-                  {(currentRole==="chef"||currentRole==="maintenance_admin")&&(
-                    <button onClick={()=>{if(window.confirm(`Remove ${rc.l} role from ${u.name||u.email}?`))removeUserRole(u.email);}} style={{background:C.dangerBg,color:C.danger,padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:700,border:"none",cursor:"pointer"}}>🗑 Remove</button>
-                  )}
+                    <span style={{padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:700,background:rc.bg,color:rc.c}}>{rc.l}</span>
+                    {currentRole!=="super_admin"&&(
+                      <select value={currentRole} onChange={e=>setUserRole(u.email,e.target.value)} style={{fontSize:12,padding:"5px 9px",borderRadius:6,border:`1px solid ${C.border}`,cursor:"pointer"}}>
+                        <option value="customer">Customer</option>
+                        <option value="chef">Chef</option>
+                        <option value="maintenance_admin">Maintenance Admin</option>
+                      </select>
+                    )}
+                    {(currentRole==="chef"||currentRole==="maintenance_admin")&&(
+                      <button onClick={()=>{if(window.confirm(`Remove ${rc.l} role from ${u.name||u.email}?`))removeUserRole(u.email);}} style={{background:C.dangerBg,color:C.danger,padding:"5px 11px",borderRadius:6,fontSize:12,fontWeight:700,border:"none",cursor:"pointer"}}>🗑 Remove</button>
+                    )}
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:9,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                  <div style={{textAlign:"center",padding:"7px 0",background:C.surface,borderRadius:8}}>
+                    <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Joined</div>
+                    <div style={{fontSize:12,fontWeight:600}}>{u.joinedAt?new Date(u.joinedAt).toLocaleDateString("en-LK",{day:"numeric",month:"short",year:"numeric"}):"—"}</div>
+                  </div>
+                  <div style={{textAlign:"center",padding:"7px 0",background:C.surface,borderRadius:8}}>
+                    <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Last Login</div>
+                    <div style={{fontSize:12,fontWeight:600}}>{lastLogin?new Date(lastLogin.at).toLocaleDateString("en-LK",{day:"numeric",month:"short"}):"—"}</div>
+                  </div>
+                  <div style={{textAlign:"center",padding:"7px 0",background:C.surface,borderRadius:8}}>
+                    <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Total Logins</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.info}}>{loginCount}</div>
+                  </div>
+                  <div style={{textAlign:"center",padding:"7px 0",background:C.surface,borderRadius:8}}>
+                    <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Bookings</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.primary}}>{userBookings.length}</div>
+                  </div>
                 </div>
               </div>
             );})}
           </div>
         )}
 
+        {tab==="activity"&&(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+              <div>
+                <h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:3}}>Login & Signup History</h2>
+                <p style={{color:C.muted,fontSize:13}}>All user authentication events on the platform</p>
+              </div>
+              <div style={{display:"flex",gap:9,alignItems:"center"}}>
+                <span style={{fontSize:13,color:C.muted}}>{loadActivityLog().length} events</span>
+                <button onClick={()=>{if(window.confirm("Clear all activity logs?")){ls.set(K.activityLog,[]);refresh();}}} style={{background:C.dangerBg,color:C.danger,padding:"6px 13px",borderRadius:7,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>🗑 Clear Log</button>
+              </div>
+            </div>
+            {/* Summary */}
+            {(()=>{const log=loadActivityLog();const signups=log.filter(e=>e.type==="signup");const logins=log.filter(e=>e.type==="login");const today=new Date().toDateString();const todayLogins=logins.filter(e=>new Date(e.at).toDateString()===today);return(
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:11,marginBottom:20}}>
+                <MetricCard label="Total Signups" value={signups.length} color={C.success}/>
+                <MetricCard label="Total Logins" value={logins.length} color={C.primary}/>
+                <MetricCard label="Logins Today" value={todayLogins.length} color={C.info}/>
+                <MetricCard label="Unique Users" value={new Set(log.map(e=>e.email)).size} color={C.purple}/>
+              </div>
+            );})()}
+            {/* Per-user breakdown */}
+            {allUsers.length>0&&(
+              <div style={{background:"white",borderRadius:12,border:`1px solid ${C.border}`,padding:18,marginBottom:18}}>
+                <div style={{fontWeight:700,fontSize:14,marginBottom:12}}>👥 Per User Summary</div>
+                <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",gap:0,fontSize:12}}>
+                  {["User","Role","Joined","Logins","Last Login"].map(h=><div key={h} style={{padding:"7px 10px",background:C.surface,fontWeight:700,color:C.muted,fontSize:11,borderBottom:`2px solid ${C.border}`}}>{h}</div>)}
+                  {allUsers.map((u,i)=>{
+                    const log=loadActivityLog().filter(e=>e.email===u.email);
+                    const loginCount=log.filter(e=>e.type==="login").length;
+                    const lastLogin=log.filter(e=>e.type==="login").slice(-1)[0];
+                    const currentRole=getRoleDisplay(u.email);
+                    const rc=ROLE_COLORS[currentRole]||ROLE_COLORS.customer;
+                    return[
+                      <div key={u.email+"n"} style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}><Avatar initials={(u.name||"U").split(" ").map(n=>n[0]).join("").slice(0,2)} size={24} color={[C.primary,C.info,C.success][i%3]}/><div><div style={{fontWeight:600}}>{u.name||"—"}</div><div style={{fontSize:10,color:C.muted}}>{u.email}</div></div></div>,
+                      <div key={u.email+"r"} style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,verticalAlign:"middle"}}><span style={{background:rc.bg,color:rc.c,padding:"2px 8px",borderRadius:20,fontSize:10,fontWeight:700}}>{rc.l}</span></div>,
+                      <div key={u.email+"j"} style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,color:C.muted}}>{u.joinedAt?new Date(u.joinedAt).toLocaleDateString("en-LK",{day:"numeric",month:"short",year:"2-digit"}):"—"}</div>,
+                      <div key={u.email+"l"} style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,fontWeight:700,color:C.primary}}>{loginCount}</div>,
+                      <div key={u.email+"ll"} style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,color:C.muted,fontSize:11}}>{lastLogin?new Date(lastLogin.at).toLocaleString("en-LK",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"Never"}</div>,
+                    ];
+                  })}
+                </div>
+              </div>
+            )}
+            {/* Full event log */}
+            <div style={{background:"white",borderRadius:12,border:`1px solid ${C.border}`,padding:18}}>
+              <div style={{fontWeight:700,fontSize:14,marginBottom:12}}>📋 Full Event Log</div>
+              {loadActivityLog().length===0?<EmptyState icon="🕐" text="No activity recorded yet. Events appear as users log in or sign up."/>:
+              loadActivityLog().slice().reverse().map((ev,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:11}}>
+                    <div style={{width:34,height:34,borderRadius:"50%",background:ev.type==="signup"?C.successBg:C.infoBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
+                      {ev.type==="signup"?"✨":"🔐"}
+                    </div>
+                    <div>
+                      <div style={{fontWeight:600,fontSize:13}}>{ev.name||ev.email}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{ev.email}</div>
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <span style={{background:ev.type==="signup"?C.successBg:C.infoBg,color:ev.type==="signup"?C.success:C.info,padding:"3px 10px",borderRadius:20,fontSize:11,fontWeight:700,display:"inline-block",marginBottom:3}}>
+                      {ev.type==="signup"?"✨ New Signup":"🔐 Login"}
+                    </span>
+                    <div style={{fontSize:11,color:C.muted}}>{new Date(ev.at).toLocaleString("en-LK",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {tab==="bookings"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:18}}>All Bookings</h2>{allBookings.length===0?<EmptyState icon="📅" text="No bookings yet."/>:allBookings.slice().reverse().map(b=><div key={b.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:17,marginBottom:9}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:9}}><div><div style={{fontWeight:700,fontSize:14}}>{b.customerName||b.customerEmail}</div><div style={{fontSize:11,color:C.muted}}>#{b.id} · {b.chefAlias}</div></div><BookingStatusBadge status={b.status}/></div><div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:9,fontSize:12}}>{[["Date",b.date||"—"],["Time",b.time||"—"],["Guests",b.guests||"—"],["Phone",b.customerPhone||"—"],["Amount",b.amount?fmtLKR(b.amount):"TBD"]].map(([k,v])=><div key={k}><div style={{color:C.muted,fontSize:10}}>{k}</div><div style={{fontWeight:600}}>{v}</div></div>)}</div></div>)}</div>}
         {tab==="payments"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:16}}>Payments</h2><div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:13,marginBottom:20}}><MetricCard label="Total Revenue" value={fmtLKR(totalRevenue)} color={C.primary}/><MetricCard label="Platform Fees" value={fmtLKR(allBookings.reduce((s,b)=>s+(b.commissionAmt||0),0))} color={C.info}/><MetricCard label="Safety Holds" value={fmtLKR(allBookings.reduce((s,b)=>s+(b.holdAmt||0),0))} color={C.warn}/></div>{allBookings.filter(b=>b.amount).length===0?<EmptyState icon="💳" text="No payments yet."/>:allBookings.filter(b=>b.amount).slice().reverse().map(b=><div key={b.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:16,marginBottom:9,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:600}}>{b.customerName||b.customerEmail}</div><div style={{fontSize:11,color:C.muted}}>{b.date} · {b.chefAlias}</div></div><div style={{textAlign:"right"}}><div style={{fontWeight:700,color:C.primary}}>{fmtLKR(b.amount)}</div><div style={{fontSize:11,color:C.muted}}>Fee: {fmtLKR(b.commissionAmt||0)} · Hold: {fmtLKR(b.holdAmt||0)}</div></div></div>)}</div>}
-        {tab==="fee-sugs"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:6}}>Fee Suggestions</h2><p style={{color:C.muted,marginBottom:18,fontSize:13}}>Chef suggested starting price adjustments. You control the final rates.</p>{feeSugs.length===0?<EmptyState icon="💡" text="No pending suggestions."/>:feeSugs.map(sug=><div key={sug.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:18,marginBottom:11}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:9}}><div><div style={{fontWeight:700,fontSize:14}}>{sug.chefAlias}</div><div style={{fontSize:11,color:C.muted}}>{sug.chefEmail}</div></div><span style={{background:C.warnBg,color:C.warn,padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:700}}>Pending</span></div><div style={{display:"flex",gap:18,marginBottom:9}}><div><span style={{fontSize:12,color:C.muted}}>All Inclusive: </span><strong>{fmtLKR(sug.suggestAllIn)}</strong></div><div><span style={{fontSize:12,color:C.muted}}>Cook-at-Home: </span><strong>{fmtLKR(sug.suggestCook)}</strong></div></div>{sug.note&&<p style={{fontSize:13,color:C.muted,marginBottom:9}}>{sug.note}</p>}<div style={{display:"flex",gap:8}}><button onClick={()=>approveSug(sug)} style={{background:C.success,color:"white",padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✓ Approve</button><button onClick={()=>{const chef=CHEFS_DATA.find(c=>c.alias===sug.chefAlias);if(chef){setEditFee(chef);setFeeForm({startingFrom:sug.suggestAllIn,extraPerGuest:settings.extraPerGuest});}}} style={{background:C.infoBg,color:C.info,padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✏️ Modify</button></div></div>)}</div>}
+        {tab==="fee-sugs"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:6}}>Fee Suggestions</h2><p style={{color:C.muted,marginBottom:18,fontSize:13}}>Chef suggested starting price adjustments. You control the final rates.</p>{feeSugs.length===0?<EmptyState icon="💡" text="No pending suggestions."/>:feeSugs.map(sug=><div key={sug.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:18,marginBottom:11}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:9}}><div><div style={{fontWeight:700,fontSize:14}}>{sug.chefAlias}</div><div style={{fontSize:11,color:C.muted}}>{sug.chefEmail}</div></div><span style={{background:C.warnBg,color:C.warn,padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:700}}>Pending</span></div><div style={{display:"flex",gap:18,marginBottom:9}}><div><span style={{fontSize:12,color:C.muted}}>All Inclusive: </span><strong>{fmtLKR(sug.suggestAllIn)}</strong></div><div><span style={{fontSize:12,color:C.muted}}>Cook-at-Home: </span><strong>{fmtLKR(sug.suggestCook)}</strong></div></div>{sug.note&&<p style={{fontSize:13,color:C.muted,marginBottom:9}}>{sug.note}</p>}<div style={{display:"flex",gap:8}}><button onClick={()=>approveSug(sug)} style={{background:C.success,color:"white",padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✓ Approve</button><button onClick={()=>{const chef=getAllChefs().find(c=>c.alias===sug.chefAlias);if(chef){setEditFee(chef);setFeeForm({startingFrom:sug.suggestAllIn,extraPerGuest:settings.extraPerGuest});}}} style={{background:C.infoBg,color:C.info,padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✏️ Modify</button></div></div>)}</div>}
         {tab==="proposals"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:18}}>All Proposals</h2>{allProposals.length===0?<EmptyState icon="📝" text="No proposals yet."/>:allProposals.slice().reverse().map(p=>{const sc={pending_review:{bg:C.warnBg,c:C.warn,l:"Pending"},accepted:{bg:C.successBg,c:C.success,l:"Accepted"},rejected:{bg:C.dangerBg,c:C.danger,l:"Rejected"}}[p.status]||{bg:C.surface,c:C.muted,l:p.status};return(<div key={p.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:16,marginBottom:9,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:700,fontSize:14}}>{p.chefAlias} → {p.customerEmail}</div><div style={{fontSize:11,color:C.muted}}>{new Date(p.submittedAt).toLocaleDateString()} · {(p.menuItems||[]).length} dishes</div></div><div style={{textAlign:"right",display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end"}}><div style={{fontWeight:700,color:C.primary}}>{fmtLKR(p.finalPrice||p.proposedPrice)}</div><span style={{background:sc.bg,color:sc.c,padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:600}}>{sc.l}</span></div></div>);})}</div>}
         {tab==="settings"&&(
           <div>
@@ -1801,6 +2054,16 @@ function AppInner() {
   const [showAuth,setShowAuth]=useState(null);
   const [selectedChef,setSelectedChef]=useState(null);
   const [bookingChef,setBookingChef]=useState(null);
+  const [chefListKey,setChefListKey]=useState(0);
+  // Re-render chef-related pages whenever removed list or dynamic chefs change
+  useEffect(()=>{
+    const onStorage=(e)=>{
+      if(!e||["cah_removed_chefs","cah_dynamic_chefs"].includes(e.key)||e.key===null)
+        setChefListKey(k=>k+1);
+    };
+    window.addEventListener("storage",onStorage);
+    return()=>window.removeEventListener("storage",onStorage);
+  },[]);
 
   useEffect(()=>{
     setSelectedChef(null); setBookingChef(null);
@@ -1826,11 +2089,11 @@ function AppInner() {
     <div style={{minHeight:"100vh",background:C.surface}}>
       <style>{css}</style>
       <Navbar page={page} setPage={setPage} user={user} onLogout={handleLogout} setShowAuth={setShowAuth}/>
-      {page==="home"&&<><HeroSection setPage={setPage}/><FeaturesRow/><PopularExperiences setPage={setPage}/><HowItWorks/><StatsRow/><TrustSection/><Footer setPage={setPage}/></>}
-      {page==="chefs"&&<><ChefsPage setPage={setPage} setSelectedChef={setSelectedChef}/><Footer setPage={setPage}/></>}
+      {page==="home"&&<><HeroSection setPage={setPage}/><FeaturesRow/><PopularExperiences key={`pop-${chefListKey}`} setPage={setPage}/><HowItWorks/><StatsRow/><TrustSection/><Footer setPage={setPage}/></>}
+      {page==="chefs"&&<><ChefsPage key={`chefs-${chefListKey}`} setPage={setPage} setSelectedChef={setSelectedChef}/><Footer setPage={setPage}/></>}
       {page==="chef-profile"&&<><ChefProfile chef={selectedChef} setPage={setPage} setBookingChef={setBookingChef}/><Footer setPage={setPage}/></>}
       {page==="booking"&&<><BookingPage chef={bookingChef||selectedChef} setPage={setPage} user={user} setShowAuth={setShowAuth}/><Footer setPage={setPage}/></>}
-      {page==="experiences"&&<div style={{maxWidth:1200,margin:"0 auto",padding:"44px 24px"}}><h1 style={{fontFamily:F.heading,fontSize:34,fontWeight:700,marginBottom:20}}>All Experiences</h1><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:18}}>{CHEFS_DATA.flatMap(c=>c.menus.map(m=>({menu:m,chef:c}))).map(({menu,chef})=><div key={menu+chef.id} className="card" style={{cursor:"pointer"}} onClick={()=>{setSelectedChef(chef);setPage("chef-profile");}}><div style={{height:110,background:`linear-gradient(135deg,${C.dark}22,${C.primary}22)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:40}}>🍽️</div><div style={{padding:14}}><div style={{fontFamily:F.heading,fontSize:14,fontWeight:600,marginBottom:5}}>{menu}</div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:11,color:C.muted}}>by {chef.alias}</span><Badge type={chef.type}/></div><div style={{fontSize:11,color:C.primary,fontWeight:600,marginTop:5}}>Price on Request</div></div></div>)}</div></div>}
+      {page==="experiences"&&<div style={{maxWidth:1200,margin:"0 auto",padding:"44px 24px"}}><h1 style={{fontFamily:F.heading,fontSize:34,fontWeight:700,marginBottom:20}}>All Experiences</h1><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:18}}>{getAllChefs().flatMap(c=>(c.menus||[]).map(m=>({menu:m,chef:c}))).map(({menu,chef})=><div key={menu+chef.id} className="card" style={{cursor:"pointer"}} onClick={()=>{setSelectedChef(chef);setPage("chef-profile");}}><div style={{height:110,background:`linear-gradient(135deg,${C.dark}22,${C.primary}22)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:40}}>🍽️</div><div style={{padding:14}}><div style={{fontFamily:F.heading,fontSize:14,fontWeight:600,marginBottom:5}}>{menu}</div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:11,color:C.muted}}>by {chef.alias}</span><Badge type={chef.type}/></div><div style={{fontSize:11,color:C.primary,fontWeight:600,marginTop:5}}>Price on Request</div></div></div>)}</div></div>}
       {page==="pricing"&&<><PricingPage/><Footer setPage={setPage}/></>}
       {page==="ai-menu"&&<><AIMenuPage/><Footer setPage={setPage}/></>}
       {page==="about"&&<div style={{maxWidth:760,margin:"0 auto",padding:"60px 24px",textAlign:"center"}}><h1 style={{fontFamily:F.heading,fontSize:36,fontWeight:700,marginBottom:16}}>About ChefAtHome</h1><p style={{color:C.muted,fontSize:15,lineHeight:1.8,marginBottom:22}}>Sri Lanka's first premium private chef booking platform, connecting food lovers with verified professional chefs for unforgettable home dining.</p><div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:13}}>{[["🎯","Our Mission","Make luxury private dining accessible to every Sri Lankan household"],["🔧","Our Process","Transparent proposal system — chef sets menu and price per event"],["💎","Our Values","Trust, quality, and extraordinary culinary experiences"]].map(([ic,t,d])=><div key={t} style={{background:"white",borderRadius:13,padding:22,border:`1px solid ${C.border}`}}><div style={{fontSize:28,marginBottom:9}}>{ic}</div><div style={{fontFamily:F.heading,fontSize:16,fontWeight:600,marginBottom:6}}>{t}</div><div style={{fontSize:12,color:C.muted,lineHeight:1.6}}>{d}</div></div>)}</div></div>}
