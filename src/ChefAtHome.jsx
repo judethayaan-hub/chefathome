@@ -211,8 +211,6 @@ const sbLoadApps = async () => {
   }
 };
 const sbSaveApp = async (app) => {
-  // Strip base64 file data before sending to Supabase (too large)
-  const {nicFile, policeFile, photoFile, certFile, ...appMeta} = app;
   try {
     await sb.from("chef_applications").upsert({
       id: app.id,
@@ -226,7 +224,7 @@ const sbSaveApp = async (app) => {
       specialties: app.specialties,
       status: app.status || "pending",
       submitted_at: app.submittedAt || new Date().toISOString(),
-      data: appMeta,
+      data: app, // include all fields including files
     });
   } catch(e) {
     console.warn("Supabase chef app save failed, using localStorage only", e);
@@ -409,8 +407,8 @@ function AuthProvider({ children }) {
     }
     const stored = ls.get(K.session);
     if (stored?.access_token) {
-      // Refresh both whitelists on session restore too
-      Promise.allSettled([sbLoadMaintAdminEmails(),sbLoadSupportAdmins()]).finally(()=>{
+      // Refresh both whitelists AND user roles on session restore too
+      Promise.allSettled([sbLoadMaintAdminEmails(),sbLoadSupportAdmins(),sbLoadUsers()]).finally(()=>{
         sb.getUser(stored.access_token)
           .then(ud => { setSession(stored); const u=formatUser(ud); setUser(u); ensureStore(u.email,u.name,u.role); })
           .catch(() => ls.rm(K.session))
@@ -438,8 +436,8 @@ function AuthProvider({ children }) {
     const data = await sb.signIn(email, password);
     if (!data.access_token) throw new Error(data.error_description||"Login failed");
     ls.set(K.session, data); setSession(data);
-    // Refresh both Supabase whitelists before formatting user so role is correct
-    await Promise.allSettled([sbLoadMaintAdminEmails(), sbLoadSupportAdmins()]);
+    // Refresh both Supabase whitelists AND user roles before formatting user so role is correct
+    await Promise.allSettled([sbLoadMaintAdminEmails(), sbLoadSupportAdmins(), sbLoadUsers()]);
     const ud = await sb.getUser(data.access_token);
     const u = formatUser(ud); setUser(u);
     ensureStore(u.email, u.name, u.role);
@@ -1628,7 +1626,7 @@ function ChefJoinRequestForm({user,onSubmit,onCancel}) {
     </div>}
     {step===3&&<div style={{display:"grid",gap:14}} className="fade-up">
       <div style={{background:C.infoBg,borderRadius:9,padding:11,fontSize:12,color:C.info}}>📋 All documents must be valid and clearly legible for admin verification.</div>
-      {[{k:"nicFile",label:"NIC Copy",desc:"Front & back of National Identity Card",types:"image/*",icon:"🪪",req:true},{k:"policeFile",label:"Police Clearance Certificate",desc:"Valid Police Clearance Report (PDF preferred)",types:".pdf,image/*",icon:"🚔",req:true},{k:"photoFile",label:"Professional Chef Photo",desc:"Clear headshot in chef attire",types:"image/*",icon:"📸",req:true},{k:"certFile",label:"Culinary Certificates",desc:"Hotel/culinary school certificates (optional)",types:".pdf,image/*",icon:"🎓",req:false}].map(doc=>(
+      {[{k:"nicFile",label:"NIC Copy",desc:"Front & back of National Identity Card (PDF only)",types:"application/pdf",icon:"🪪",req:true},{k:"policeFile",label:"Police Clearance Certificate",desc:"Valid Police Clearance Report (PDF only)",types:"application/pdf",icon:"🚔",req:true},{k:"photoFile",label:"Professional Chef Photo",desc:"Clear headshot in chef attire (PDF only)",types:"application/pdf",icon:"📸",req:true},{k:"certFile",label:"Culinary Certificates",desc:"Hotel/culinary school certificates (PDF only, optional)",types:"application/pdf",icon:"🎓",req:false}].map(doc=>(
         <div key={doc.k}><RL req={doc.req}>{doc.icon} {doc.label}</RL><p style={{fontSize:11,color:C.muted,marginBottom:5}}>{doc.desc}</p>
         <label className={`upload-zone ${form[doc.k]?"has-file":""}`} style={{display:"block",cursor:"pointer"}}>
           <input type="file" style={{display:"none"}} accept={doc.types} onChange={e=>handleFile(doc.k,e)}/>
@@ -2509,6 +2507,8 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
       apps[i].status="approved";
       saveApps(apps);
       setRole(apps[i].email,"chef");
+      // Also update role in Supabase users table so user sees chef role on next load
+      sb.from("users").upsert({email:apps[i].email, data:{...loadUsers().find(u=>u.email===apps[i].email)||{}, email:apps[i].email, role:"chef"}}).catch(()=>{});
       // Create a dynamic chef profile so they appear in the public chef listing
       const app=apps[i];
       const specialties=(app.specialties||"").split(",").map(s=>s.trim()).filter(Boolean);
