@@ -899,7 +899,7 @@ Generate 2 personalised Sri Lankan menu recommendations. Respond ONLY with valid
 // ─── Navbar ───────────────────────────────────────────────────────────────────
 function Navbar({page,setPage,user,onLogout,setShowAuth}) {
   const [menuOpen,setMenuOpen]=useState(false);
-  const dashPage = user?.role==="super_admin"||user?.role==="support_admin"?"admin":user?.role==="maintenance_admin"?"maintenance-panel":user?.role==="chef"?"chef-panel":"dashboard";
+  const dashPage = user?.role==="super_admin"||user?.role==="support_admin"?"admin":user?.role==="maintenance_admin"?"maintenance-panel":user?.role==="chef"?"chef-panel":user?.role==="suspended_chef"?"chef-panel":"dashboard";
   const dashLabel = user?.role==="super_admin"?"⚙️ Super Admin":user?.role==="support_admin"?"🛡️ Support Admin":user?.role==="maintenance_admin"?"🔧 M.Admin":user?.role==="chef"?"👨‍🍳 Panel":"Dashboard";
   const navPages=[["home","Home"],["chefs","Chefs"],["experiences","Experiences"],["pricing","Pricing"],["ai-menu","✨ AI Menu"],["about","About"]];
   return(
@@ -1439,6 +1439,15 @@ function ChefPanel({user,loginKey}) {
   const myBookings=loadBookings().filter(b=>b.chefId===chefData?.id||b.chefAlias===user?.name||b.chefAlias===chefData?.alias);
   const pendingProposalBookings=myBookings.filter(b=>b.status==="pending_proposal");
   const settings=loadSettings();
+  const isSuspended = user?.role==="suspended_chef" || loadSuspendedChefs().some(s=>s.email===user?.email||s.id===chefData?.id);
+
+  if(isSuspended) return(
+    <div style={{maxWidth:560,margin:"80px auto",padding:40,textAlign:"center"}}>
+      <div style={{fontSize:64,marginBottom:16}}>🚫</div>
+      <h2 style={{fontFamily:F.heading,fontSize:26,marginBottom:10,color:C.danger}}>Account Suspended</h2>
+      <p style={{color:C.muted,fontSize:14,lineHeight:1.7}}>Your chef account has been suspended by the admin. Please contact support for more information.</p>
+    </div>
+  );
 
   return(
     <div style={{display:"flex",minHeight:"calc(100vh - 64px)"}}>
@@ -2483,25 +2492,45 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
     const users=loadUsers();
     const i=users.findIndex(u=>u.email===email);
     if(i>=0){users[i].role="customer";saveUsers(users);}
+    // Update Supabase so chef sees demotion on next login
+    sb.from("users").upsert({email, data:{...(loadUsers().find(u=>u.email===email)||{}), email, role:"customer"}}).catch(()=>{});
     setAllUsers(loadAllUsers());
   };
   const confirmSuspend=()=>{
     if(!suspendTarget) return;
-    const {id:chefId,alias:chefAlias}=suspendTarget;
+    const {id:chefId,alias:chefAlias,email:chefEmail}=suspendTarget;
     const reason=suspendReason.trim()||"No reason provided";
-    const updated=[...loadSuspendedChefs(),{id:chefId,alias:chefAlias,suspendedAt:new Date().toISOString(),reason}];
+    const updated=[...loadSuspendedChefs(),{id:chefId,alias:chefAlias,email:chefEmail,suspendedAt:new Date().toISOString(),reason}];
     saveSuspendedChefs(updated);
     setSuspendedChefs(updated);
     addChefHistoryEvent({chefId,chefAlias,action:"suspended",reason});
+    // Update Supabase so chef sees suspension on next login
+    if(chefEmail){
+      const users=loadUsers();
+      const idx=users.findIndex(u=>u.email===chefEmail);
+      if(idx>=0){users[idx].role="suspended_chef";saveUsers(users);}
+      else users.push({email:chefEmail,role:"suspended_chef"});
+      saveUsers(users);
+      sb.from("users").upsert({email:chefEmail, data:{...(loadUsers().find(u=>u.email===chefEmail)||{}), email:chefEmail, role:"suspended_chef"}}).catch(()=>{});
+    }
     window.dispatchEvent(new StorageEvent("storage",{key:K.suspendedChefs}));
     setSuspendTarget(null);setSuspendReason("");
     refresh();
   };
   const reactivateChef=(chefId,chefAlias)=>{
-    const updated=loadSuspendedChefs().filter(s=>s.id!==chefId);
+    const suspended=loadSuspendedChefs();
+    const chefRecord=suspended.find(s=>s.id===chefId);
+    const updated=suspended.filter(s=>s.id!==chefId);
     saveSuspendedChefs(updated);
     setSuspendedChefs(updated);
     addChefHistoryEvent({chefId,chefAlias,action:"reactivated",reason:"Reactivated by super admin"});
+    // Restore chef role in Supabase
+    if(chefRecord?.email){
+      const users=loadUsers();
+      const idx=users.findIndex(u=>u.email===chefRecord.email);
+      if(idx>=0){users[idx].role="chef";saveUsers(users);}
+      sb.from("users").upsert({email:chefRecord.email, data:{...(loadUsers().find(u=>u.email===chefRecord.email)||{}), email:chefRecord.email, role:"chef"}}).catch(()=>{});
+    }
     window.dispatchEvent(new StorageEvent("storage",{key:K.suspendedChefs}));
     refresh();
   };
@@ -2923,8 +2952,11 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
 
                       </select>
                     )}
-                    {(currentRole==="chef"||currentRole==="maintenance_admin")&&(
-                      <button onClick={()=>{if(window.confirm(`Remove ${rc.l} role from ${u.name||u.email}?`))removeUserRole(u.email);}} style={{background:C.dangerBg,color:C.danger,padding:"5px 11px",borderRadius:6,fontSize:12,fontWeight:700,border:"none",cursor:"pointer"}}>🗑 Remove</button>
+                    {currentRole==="maintenance_admin"&&(
+                      <button onClick={()=>{if(window.confirm(`Remove Maintenance Admin role from ${u.name||u.email}?`))removeUserRole(u.email);}} style={{background:C.dangerBg,color:C.danger,padding:"5px 11px",borderRadius:6,fontSize:12,fontWeight:700,border:"none",cursor:"pointer"}}>🗑 Remove</button>
+                    )}
+                    {currentRole==="chef"&&(
+                      <span style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>Manage in Chef Management</span>
                     )}
                   </div>
                 </div>
@@ -3136,6 +3168,7 @@ function AppInner() {
     if (!user) { if(["admin","chef-panel","dashboard","maintenance-panel"].includes(page)) setPage("home"); return; }
     if (user.role==="super_admin"||user.role==="support_admin") setPage("admin");
     else if (user.role==="maintenance_admin") setPage("maintenance-panel");
+    else if (user.role==="chef"||user.role==="suspended_chef") setPage("chef-panel");
   // eslint-disable-next-line
   },[loginKey]);
 
