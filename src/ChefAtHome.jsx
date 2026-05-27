@@ -79,7 +79,7 @@ const getStaticChefDisplayId = (idx) => `CHF-${String(idx+1).padStart(3,"0")}`;
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
 const SB_URL = "https://fhvwafasykldkuaqrelz.supabase.co";
-const SB_KEY = "YOUR_ACTUAL_ANON_KEY";
+const SB_KEY = "sb_publishable_YQEb39B1Xxp5qdSYX5ZeAw_cxPQlyyJ";
 const sb = (() => {
   const h = { "Content-Type":"application/json", apikey:SB_KEY, Authorization:`Bearer ${SB_KEY}` };
   const req = async (path,method="GET",body=null,extra={}) => {
