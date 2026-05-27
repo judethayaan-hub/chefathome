@@ -42,14 +42,14 @@ const loadUsers     = ()  => ls.get(K.users, []);
 const saveUsers     = (u) => ls.set(K.users, u);
 const loadBookings  = ()  => ls.get(K.bookings, []);
 const saveBookings  = (b) => ls.set(K.bookings, b);
-const addBooking    = (b) => { const all=loadBookings(); all.push(b); saveBookings(all); };
-const updateBooking = (id, patch) => { saveBookings(loadBookings().map(b=>b.id===id?{...b,...patch}:b)); };
+const addBooking    = (b) => { sbSaveBooking(b); };
+const updateBooking = (id, patch) => { sbUpdateBooking(id, patch); };
 const loadProposals = ()  => ls.get(K.proposals, []);
 const saveProposals = (p) => ls.set(K.proposals, p);
-const addProposal   = (p) => { const all=loadProposals(); all.push(p); saveProposals(all); };
-const updateProposal= (id, patch) => { saveProposals(loadProposals().map(p=>p.id===id?{...p,...patch}:p)); };
+const addProposal   = (p) => { sbSaveProposal(p); };
+const updateProposal= (id, patch) => { const all=loadProposals(); const idx=all.findIndex(p=>p.id===id); if(idx>=0){all[idx]={...all[idx],...patch};sbSaveProposal(all[idx]);}  };
 const loadReviews   = ()  => ls.get(K.reviews, []);
-const addReview     = (r) => { const all=loadReviews(); all.push(r); ls.set(K.reviews, all); };
+const addReview     = (r) => { sbAddReview(r); };
 const loadApps      = ()  => ls.get(K.apps, []);
 const saveApps      = (a) => ls.set(K.apps, a);
 const loadChefFees  = ()  => ls.get(K.chefFees, {});
@@ -133,6 +133,8 @@ const sbRemoveMaintAdminEmail = async (email) => {
     await sb.from("maint_admin_emails").delete(`email=eq.${encodeURIComponent(email.toLowerCase())}`);
   } catch(e) { console.warn("Supabase maint admin delete failed, using localStorage only", e); }
   saveMaintAdminEmails(loadMaintAdminEmails().filter(e => e.toLowerCase() !== email.toLowerCase()));
+  // Signal all active sessions to re-evaluate their role
+  window.dispatchEvent(new StorageEvent("storage", {key: K.maintAdminEmails}));
 };
 const sbIsMaintAdminEmail = async (email) => {
   const emails = await sbLoadMaintAdminEmails();
@@ -176,6 +178,160 @@ const sbRemoveSupportAdmin = async (email) => {
 const sbIsSupportAdmin = async (email) => {
   const admins = await sbLoadSupportAdmins();
   return admins.some(a => a.email.toLowerCase() === (email||"").toLowerCase());
+};
+
+
+// ─── Supabase Chef Applications ──────────────────────────────────────────────
+// Table: chef_applications
+// Columns: id text, user_id text, email text, full_name text, chef_type text,
+//          city text, phone text, bio text, specialties text, status text,
+//          submitted_at timestamptz, data jsonb
+const sbLoadApps = async () => {
+  try {
+    const rows = await sb.from("chef_applications").select("*");
+    const apps = rows.map(r => ({
+      id: r.id,
+      userId: r.user_id,
+      email: r.email,
+      fullName: r.full_name,
+      chefType: r.chef_type,
+      city: r.city,
+      phone: r.phone,
+      bio: r.bio,
+      specialties: r.specialties,
+      status: r.status,
+      submittedAt: r.submitted_at,
+      ...(r.data || {}),
+    }));
+    saveApps(apps); // keep local cache
+    return apps;
+  } catch(e) {
+    console.warn("Supabase chef apps load failed, using localStorage", e);
+    return loadApps();
+  }
+};
+const sbSaveApp = async (app) => {
+  // Strip base64 file data before sending to Supabase (too large)
+  const {nicFile, policeFile, photoFile, certFile, ...appMeta} = app;
+  try {
+    await sb.from("chef_applications").upsert({
+      id: app.id,
+      user_id: app.userId || app.email,
+      email: app.email,
+      full_name: app.fullName,
+      chef_type: app.chefType,
+      city: app.city,
+      phone: app.phone,
+      bio: app.bio,
+      specialties: app.specialties,
+      status: app.status || "pending",
+      submitted_at: app.submittedAt || new Date().toISOString(),
+      data: appMeta,
+    });
+  } catch(e) {
+    console.warn("Supabase chef app save failed, using localStorage only", e);
+  }
+  // Always save full app (with files) locally
+  const apps = loadApps();
+  const idx = apps.findIndex(a => a.id === app.id);
+  if (idx >= 0) apps[idx] = app; else apps.push(app);
+  saveApps(apps);
+};
+const sbUpdateAppStatus = async (id, status) => {
+  try {
+    await fetch(`${SB_URL}/rest/v1/chef_applications?id=eq.${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type":"application/json", apikey:SB_KEY, Authorization:`Bearer ${SB_KEY}`, "Prefer":"return=representation" },
+      body: JSON.stringify({ status }),
+    });
+  } catch(e) {
+    console.warn("Supabase chef app status update failed", e);
+  }
+  const apps = loadApps();
+  const idx = apps.findIndex(a => a.id === id);
+  if (idx >= 0) { apps[idx].status = status; saveApps(apps); }
+};
+
+
+// ─── Supabase Bookings ────────────────────────────────────────────────────────
+const sbLoadBookings = async () => {
+  try {
+    const rows = await sb.from("bookings").select("id,data,created_at");
+    const bookings = rows.map(r => ({id:r.id,...(r.data||{})}));
+    saveBookings(bookings);
+    return bookings;
+  } catch(e) { console.warn("sbLoadBookings failed",e); return loadBookings(); }
+};
+const sbSaveBooking = async (booking) => {
+  try {
+    await sb.from("bookings").upsert({id:booking.id, data:booking});
+  } catch(e) { console.warn("sbSaveBooking failed",e); }
+  const all = loadBookings();
+  const idx = all.findIndex(b=>b.id===booking.id);
+  if(idx>=0) all[idx]=booking; else all.push(booking);
+  saveBookings(all);
+};
+const sbUpdateBooking = async (id, patch) => {
+  const all = await sbLoadBookings();
+  const idx = all.findIndex(b=>b.id===id);
+  if(idx>=0){
+    all[idx]={...all[idx],...patch};
+    await sbSaveBooking(all[idx]);
+  }
+};
+
+// ─── Supabase Proposals ───────────────────────────────────────────────────────
+const sbLoadProposals = async () => {
+  try {
+    const rows = await sb.from("proposals").select("id,booking_id,data,created_at");
+    const proposals = rows.map(r => ({id:r.id,bookingId:r.booking_id,...(r.data||{})}));
+    saveProposals(proposals);
+    return proposals;
+  } catch(e) { console.warn("sbLoadProposals failed",e); return loadProposals(); }
+};
+const sbSaveProposal = async (proposal) => {
+  try {
+    await sb.from("proposals").upsert({id:proposal.id, booking_id:proposal.bookingId, data:proposal});
+  } catch(e) { console.warn("sbSaveProposal failed",e); }
+  const all = loadProposals();
+  const idx = all.findIndex(p=>p.id===proposal.id);
+  if(idx>=0) all[idx]=proposal; else all.push(proposal);
+  saveProposals(all);
+};
+
+// ─── Supabase Reviews ─────────────────────────────────────────────────────────
+const sbLoadReviews = async () => {
+  try {
+    const rows = await sb.from("reviews").select("id,data,created_at");
+    const reviews = rows.map(r => ({id:r.id,...(r.data||{})}));
+    ls.set(K.reviews, reviews);
+    return reviews;
+  } catch(e) { console.warn("sbLoadReviews failed",e); return loadReviews(); }
+};
+const sbAddReview = async (review) => {
+  try {
+    await sb.from("reviews").upsert({id:review.id, data:review});
+  } catch(e) { console.warn("sbAddReview failed",e); }
+  addReview(review);
+};
+
+// ─── Supabase Users ───────────────────────────────────────────────────────────
+const sbLoadUsers = async () => {
+  try {
+    const rows = await sb.from("users").select("email,data,created_at");
+    const users = rows.map(r => ({email:r.email,...(r.data||{})}));
+    saveUsers(users);
+    return users;
+  } catch(e) { console.warn("sbLoadUsers failed",e); return loadUsers(); }
+};
+const sbSaveUser = async (user) => {
+  try {
+    await sb.from("users").upsert({email:user.email, data:user});
+  } catch(e) { console.warn("sbSaveUser failed",e); }
+  const all = loadUsers();
+  const idx = all.findIndex(u=>u.email===user.email);
+  if(idx>=0) all[idx]=user; else all.push(user);
+  saveUsers(all);
 };
 
 // ─── Auth Context ─────────────────────────────────────────────────────────────
@@ -223,6 +379,7 @@ function AuthProvider({ children }) {
       if (role !== "super_admin" && !users[idx].role) users[idx].role = role;
     }
     saveUsers(users);
+    sbSaveUser(users.find(u=>u.email===email)||{email,name,role});
     window.dispatchEvent(new StorageEvent("storage", {key: "cah_users"}));
   }, []);
 
@@ -261,6 +418,21 @@ function AuthProvider({ children }) {
       });
     } else setLoading(false);
   }, []);
+
+  // Re-evaluate role instantly when maint/support admin whitelist changes
+  useEffect(() => {
+    const handle = async (e) => {
+      if (e.key !== K.maintAdminEmails && e.key !== K.supportAdmins) return;
+      const stored = ls.get(K.session);
+      if (!stored?.access_token) return;
+      await Promise.allSettled([sbLoadMaintAdminEmails(), sbLoadSupportAdmins()]);
+      sb.getUser(stored.access_token).then(ud => {
+        const u = formatUser(ud); setUser(u);
+      }).catch(() => {});
+    };
+    window.addEventListener("storage", handle);
+    return () => window.removeEventListener("storage", handle);
+  }, [formatUser]);
 
   const signIn = async (email, password) => {
     const data = await sb.signIn(email, password);
@@ -400,49 +572,92 @@ const genId          = ()  => `${Date.now().toString(36).toUpperCase()}`;
 // ─── CSS ──────────────────────────────────────────────────────────────────────
 const css = `
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:${F.body};color:${C.text};background:${C.surface}}
-  button{cursor:pointer;font-family:${F.body};border:none}
-  input,select,textarea{font-family:${F.body}}
-  ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#f1f1f1}::-webkit-scrollbar-thumb{background:#ccc;border-radius:3px}
-  .nav-link{color:rgba(255,255,255,.8);font-size:14px;font-weight:500;transition:color .2s;padding:6px 0;cursor:pointer}.nav-link:hover{color:white}
-  .btn-primary{background:${C.primary};color:white;padding:10px 22px;border-radius:8px;font-weight:600;font-size:14px;transition:all .2s;border:none}
-  .btn-primary:hover{background:${C.primaryDark};transform:translateY(-1px);box-shadow:0 4px 16px rgba(232,116,59,.4)}
-  .btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
-  .btn-outline{background:transparent;color:${C.primary};padding:10px 22px;border-radius:8px;font-weight:600;font-size:14px;border:2px solid ${C.primary};transition:all .2s}
-  .btn-outline:hover{background:${C.primary};color:white}
-  .btn-ghost{background:rgba(255,255,255,.15);color:white;padding:10px 22px;border-radius:8px;font-weight:600;font-size:14px;transition:all .2s;border:none}.btn-ghost:hover{background:rgba(255,255,255,.25)}
-  .card{background:white;border-radius:16px;border:1px solid ${C.border};overflow:hidden;transition:all .3s}.card:hover{transform:translateY(-4px);box-shadow:0 12px 40px rgba(0,0,0,.1)}
-  .badge-premium{background:linear-gradient(135deg,#B45309,#D97706);color:white;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600}
-  .badge-standard,.badge-local{background:${C.successBg};color:${C.success};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600}
-  .badge-verified{background:${C.infoBg};color:${C.info};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600}
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  body{font-family:${F.body};color:${C.text};background:${C.surface};overflow-x:hidden;-webkit-font-smoothing:antialiased}
+  button{cursor:pointer;font-family:${F.body};border:none;touch-action:manipulation}
+  input,select,textarea{font-family:${F.body};font-size:16px!important;-webkit-appearance:none;appearance:none}
+  ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:#f1f1f1}::-webkit-scrollbar-thumb{background:#ccc;border-radius:3px}
+  .nav-link{color:rgba(255,255,255,.8);font-size:14px;font-weight:500;transition:color .2s;padding:6px 0;cursor:pointer;touch-action:manipulation}
+  .nav-link:hover{color:white}
+  .btn-primary{background:${C.primary};color:white;padding:11px 22px;border-radius:8px;font-weight:600;font-size:14px;border:none;touch-action:manipulation;-webkit-appearance:none;transition:background .15s}
+  .btn-primary:active{background:${C.primaryDark}}
+  .btn-primary:disabled{opacity:.5;cursor:not-allowed}
+  @media(hover:hover){.btn-primary:hover{background:${C.primaryDark};transform:translateY(-1px);box-shadow:0 4px 16px rgba(232,116,59,.4)}}
+  .btn-outline{background:transparent;color:${C.primary};padding:11px 22px;border-radius:8px;font-weight:600;font-size:14px;border:2px solid ${C.primary};transition:all .15s;touch-action:manipulation}
+  .btn-outline:active{background:${C.primaryLight}}
+  @media(hover:hover){.btn-outline:hover{background:${C.primary};color:white}}
+  .btn-ghost{background:rgba(255,255,255,.15);color:white;padding:11px 22px;border-radius:8px;font-weight:600;font-size:14px;border:none;touch-action:manipulation;transition:background .15s}
+  .btn-ghost:active{background:rgba(255,255,255,.3)}
+  .card{background:white;border-radius:16px;border:1px solid ${C.border};overflow:hidden;transition:box-shadow .25s}
+  @media(hover:hover){.card:hover{transform:translateY(-3px);box-shadow:0 12px 40px rgba(0,0,0,.1)}}
+  .badge-premium{background:linear-gradient(135deg,#B45309,#D97706);color:white;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
+  .badge-standard,.badge-local{background:${C.successBg};color:${C.success};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
+  .badge-verified{background:${C.infoBg};color:${C.info};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
   .star{color:${C.gold}}
-  .input{width:100%;padding:10px 14px;border:1.5px solid ${C.border};border-radius:8px;font-size:14px;outline:none;transition:border .2s;background:white}
+  .input{width:100%;padding:12px 14px;border:1.5px solid ${C.border};border-radius:8px;font-size:16px!important;outline:none;transition:border .2s;background:white;-webkit-appearance:none;appearance:none}
   .input:focus{border-color:${C.primary}}.input.error{border-color:${C.danger}}
+  select.input{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='%23666' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;padding-right:38px}
   .label{font-size:13px;font-weight:600;color:${C.muted};margin-bottom:6px;display:block;letter-spacing:.3px}
-  .sidebar-link{display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:8px;color:rgba(255,255,255,.65);font-size:14px;font-weight:500;cursor:pointer;transition:all .2s}
-  .sidebar-link:hover{background:rgba(255,255,255,.1);color:white}.sidebar-link.active{background:${C.primary};color:white}
-  .tab{padding:8px 18px;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;transition:all .2s;border:none;background:transparent;color:${C.muted}}
-  .tab.active{background:${C.primary};color:white}.tab:hover:not(.active){background:${C.primaryLight};color:${C.primary}}
-  @keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}.fade-up{animation:fadeUp .4s ease forwards}
+  .sidebar-link{display:flex;align-items:center;gap:10px;padding:11px 16px;border-radius:8px;color:rgba(255,255,255,.65);font-size:14px;font-weight:500;cursor:pointer;transition:background .15s;touch-action:manipulation;white-space:nowrap}
+  .sidebar-link.active{background:${C.primary};color:white}
+  @media(hover:hover){.sidebar-link:hover{background:rgba(255,255,255,.1);color:white}}
+  .tab{padding:9px 16px;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;border:none;background:transparent;color:${C.muted};touch-action:manipulation;white-space:nowrap;transition:background .15s}
+  .tab.active{background:${C.primary};color:white}
+  @media(hover:hover){.tab:hover:not(.active){background:${C.primaryLight};color:${C.primary}}}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}.fade-up{animation:fadeUp .3s ease forwards}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}.pulse{animation:pulse 1.5s ease-in-out infinite}
-  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
-  .modal{background:white;border-radius:20px;padding:32px;width:480px;max-width:95vw;position:relative;animation:fadeUp .3s ease;max-height:92vh;overflow-y:auto}
-  .modal-wide{background:white;border-radius:20px;padding:32px;width:700px;max-width:96vw;position:relative;animation:fadeUp .3s ease;max-height:92vh;overflow-y:auto}
-  @media(max-width:768px){.hide-mobile{display:none!important}.modal{padding:20px!important}}
-  .ai-bubble{background:linear-gradient(135deg,#1e293b,#0f172a);border-radius:16px;padding:20px;color:white;border:1px solid rgba(232,116,59,.3)}
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px);padding:0}
+  @media(min-width:600px){.modal-overlay{align-items:center;padding:16px}}
+  .modal{background:white;border-radius:20px 20px 0 0;padding:24px 18px 36px;width:100%;max-width:100%;position:relative;animation:fadeUp .25s ease;max-height:90vh;overflow-y:auto}
+  @media(min-width:600px){.modal{border-radius:20px;padding:32px;width:480px;max-width:95vw}}
+  .modal-wide{background:white;border-radius:20px 20px 0 0;padding:24px 18px 36px;width:100%;position:relative;animation:fadeUp .25s ease;max-height:90vh;overflow-y:auto}
+  @media(min-width:600px){.modal-wide{border-radius:20px;padding:32px;width:700px;max-width:96vw}}
+  .hide-mobile{display:none!important}
+  @media(min-width:769px){.hide-mobile{display:flex!important}}
+  .show-mobile{display:flex!important}
+  @media(min-width:769px){.show-mobile{display:none!important}}
+  .ai-bubble{background:linear-gradient(135deg,#1e293b,#0f172a);border-radius:16px;padding:16px;color:white;border:1px solid rgba(232,116,59,.3)}
   .typing-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:${C.primary};margin:0 2px;animation:pulse 1s ease-in-out infinite}
   .typing-dot:nth-child(2){animation-delay:.2s}.typing-dot:nth-child(3){animation-delay:.4s}
-  .cal-day{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;border:1.5px solid transparent;margin:0 auto}
-  .cal-day:hover:not(.cal-dis):not(.cal-sel){background:${C.primaryLight};color:${C.primary};border-color:${C.primary}}
+  .cal-day{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;cursor:pointer;border:1.5px solid transparent;margin:0 auto;touch-action:manipulation}
   .cal-sel{background:${C.primary}!important;color:white!important;border-color:${C.primary}!important}
   .cal-today{border-color:${C.primary};color:${C.primary};font-weight:700}.cal-dis{color:#ccc;cursor:not-allowed}
-  .upload-zone{border:2px dashed ${C.border};border-radius:10px;padding:18px;text-align:center;cursor:pointer;transition:all .2s;background:${C.surface}}
-  .upload-zone:hover,.upload-zone.has-file{border-color:${C.success};background:${C.successBg}}
+  .upload-zone{border:2px dashed ${C.border};border-radius:10px;padding:18px;text-align:center;cursor:pointer;transition:border .2s;background:${C.surface}}
+  .upload-zone.has-file{border-color:${C.success};background:${C.successBg}}
   .req{color:${C.danger};margin-left:2px}
   .payhere-badge{background:linear-gradient(135deg,#0055CC,#0077FF);color:white;font-weight:800;font-size:14px;padding:5px 12px;border-radius:6px}
   .proposal-badge{background:linear-gradient(135deg,${C.purple},#6D28D9);color:white;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px}
   .maint-admin-badge{background:linear-gradient(135deg,#0284C7,#0EA5E9);color:white;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px}
+  .mob-nav{position:fixed;bottom:0;left:0;right:0;background:${C.darkNav};border-top:1px solid rgba(255,255,255,.1);display:flex;z-index:200;padding:4px 0 env(safe-area-inset-bottom,4px)}
+  @media(min-width:769px){.mob-nav{display:none}}
+  .mob-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 4px;cursor:pointer;touch-action:manipulation;border:none;background:transparent;color:rgba(255,255,255,.5);font-size:9px;font-weight:600;font-family:${F.body}}
+  .mob-nav-item.active{color:${C.primary}}
+  .mob-nav-item span:first-child{font-size:18px}
+  .mob-scroll-tabs{display:flex;overflow-x:auto;gap:6px;padding:10px 16px;background:${C.darkNav};-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .mob-scroll-tabs::-webkit-scrollbar{display:none}
+  .mob-scroll-tab{flex-shrink:0;padding:8px 14px;border-radius:20px;color:rgba(255,255,255,.6);font-size:12px;font-weight:600;cursor:pointer;touch-action:manipulation;border:none;background:rgba(255,255,255,.08);white-space:nowrap;font-family:${F.body}}
+  .mob-scroll-tab.active{background:${C.primary};color:white}
+  .panel-layout{display:flex;min-height:calc(100vh - 64px)}
+  .panel-sidebar{width:220px;background:${C.darkNav};padding:22px 11px;flex-shrink:0}
+  @media(max-width:768px){.panel-sidebar{display:none}.panel-layout{flex-direction:column;min-height:calc(100vh - 64px - 56px)}}
+  .panel-content{flex:1;padding:28px;overflow-x:hidden;min-width:0}
+  @media(max-width:768px){.panel-content{padding:16px}}
+  .r2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:500px){.r2{grid-template-columns:1fr}}
+  .r3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:13px}
+  @media(max-width:700px){.r3{grid-template-columns:1fr 1fr}}
+  @media(max-width:400px){.r3{grid-template-columns:1fr}}
+  .r4{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+  @media(max-width:900px){.r4{grid-template-columns:1fr 1fr}}
+  @media(max-width:480px){.r4{grid-template-columns:1fr}}
+  .r5{display:grid;grid-template-columns:repeat(5,1fr);gap:16px}
+  @media(max-width:900px){.r5{grid-template-columns:1fr 1fr}}
+  @media(max-width:480px){.r5{grid-template-columns:1fr}}
+  .hero-grid{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center}
+  @media(max-width:768px){.hero-grid{grid-template-columns:1fr;gap:32px}}
+  .chef-row-btns{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  @media(max-width:600px){.chef-row-btns{gap:5px}}
 `;
 
 // ─── Utility Components ───────────────────────────────────────────────────────
@@ -676,31 +891,58 @@ Generate 2 personalised Sri Lankan menu recommendations. Respond ONLY with valid
 
 // ─── Navbar ───────────────────────────────────────────────────────────────────
 function Navbar({page,setPage,user,onLogout,setShowAuth}) {
+  const [menuOpen,setMenuOpen]=useState(false);
   const dashPage = user?.role==="super_admin"||user?.role==="support_admin"?"admin":user?.role==="maintenance_admin"?"maintenance-panel":user?.role==="chef"?"chef-panel":"dashboard";
   const dashLabel = user?.role==="super_admin"?"⚙️ Super Admin":user?.role==="support_admin"?"🛡️ Support Admin":user?.role==="maintenance_admin"?"🔧 M.Admin":user?.role==="chef"?"👨‍🍳 Panel":"Dashboard";
+  const navPages=[["home","Home"],["chefs","Chefs"],["experiences","Experiences"],["pricing","Pricing"],["ai-menu","✨ AI Menu"],["about","About"]];
   return(
-    <nav style={{background:C.darkNav,position:"sticky",top:0,zIndex:100,boxShadow:"0 2px 20px rgba(0,0,0,.2)"}}>
-      <div style={{maxWidth:1200,margin:"0 auto",padding:"0 24px",display:"flex",alignItems:"center",justifyContent:"space-between",height:64}}>
-        <div onClick={()=>setPage("home")} style={{cursor:"pointer",display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:22,color:C.primary}}>🍽️</span><span style={{fontFamily:F.heading,fontWeight:700,fontSize:20,color:"white"}}>Chef<span style={{color:C.primary}}>at</span>Home</span></div>
-        <div className="hide-mobile" style={{display:"flex",alignItems:"center",gap:22}}>
-          {[["home","Home"],["chefs","Chefs"],["experiences","Experiences"],["pricing","Pricing"],["ai-menu","✨ AI Menu"],["about","About"]].map(([p,l])=><span key={p} className="nav-link" onClick={()=>setPage(p)} style={{color:page===p?C.primary:undefined}}>{l}</span>)}
+    <>
+    <nav style={{background:C.darkNav,position:"sticky",top:0,zIndex:200,boxShadow:"0 2px 20px rgba(0,0,0,.2)"}}>
+      <div style={{maxWidth:1200,margin:"0 auto",padding:"0 16px",display:"flex",alignItems:"center",justifyContent:"space-between",height:60}}>
+        <div onClick={()=>{setPage("home");setMenuOpen(false);}} style={{cursor:"pointer",display:"flex",alignItems:"center",gap:7}}>
+          <span style={{fontSize:20,color:C.primary}}>🍽️</span>
+          <span style={{fontFamily:F.heading,fontWeight:700,fontSize:18,color:"white"}}>Chef<span style={{color:C.primary}}>at</span>Home</span>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:9}}>
-          {user?(<><button className="btn-primary" style={{fontSize:13,padding:"7px 13px"}} onClick={()=>setPage(dashPage)}>{dashLabel}</button><Avatar initials={user.name?.split(" ").map(n=>n[0]).join("").slice(0,2)||"U"} size={32}/><button onClick={onLogout} style={{background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.7)",padding:"6px 11px",borderRadius:6,fontSize:13,border:"none"}}>Logout</button></>):(<button className="btn-ghost" style={{padding:"7px 15px",fontSize:13}} onClick={()=>setShowAuth("login")}>Log In / Sign Up</button>)}
+        <div className="hide-mobile" style={{display:"flex",alignItems:"center",gap:22}}>
+          {navPages.map(([p,l])=><span key={p} className="nav-link" onClick={()=>setPage(p)} style={{color:page===p?C.primary:undefined}}>{l}</span>)}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {user?(
+            <>
+              <button className="btn-primary" style={{fontSize:12,padding:"7px 11px",whiteSpace:"nowrap"}} onClick={()=>setPage(dashPage)}>{dashLabel}</button>
+              <Avatar initials={user.name?.split(" ").map(n=>n[0]).join("").slice(0,2)||"U"} size={30}/>
+              <button onClick={onLogout} style={{background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.7)",padding:"6px 10px",borderRadius:6,fontSize:12,border:"none",whiteSpace:"nowrap"}}>Logout</button>
+            </>
+          ):(
+            <button className="btn-ghost" style={{padding:"7px 14px",fontSize:13}} onClick={()=>setShowAuth("login")}>Log In</button>
+          )}
+          <button className="show-mobile" onClick={()=>setMenuOpen(o=>!o)} style={{background:"rgba(255,255,255,.1)",color:"white",padding:"7px 10px",borderRadius:7,fontSize:18,border:"none",lineHeight:1}}>☰</button>
         </div>
       </div>
     </nav>
+    {menuOpen&&(
+      <div style={{position:"fixed",inset:0,zIndex:199,background:"rgba(0,0,0,.5)"}} onClick={()=>setMenuOpen(false)}>
+        <div onClick={e=>e.stopPropagation()} style={{position:"absolute",top:60,left:0,right:0,background:C.darkNav,padding:"12px 0 20px",borderBottom:`1px solid rgba(255,255,255,.1)`}}>
+          {navPages.map(([p,l])=>(
+            <div key={p} onClick={()=>{setPage(p);setMenuOpen(false);}} style={{padding:"13px 24px",color:page===p?C.primary:"rgba(255,255,255,.85)",fontSize:15,fontWeight:500,cursor:"pointer",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
+              {l}
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
 // ─── Public Pages ─────────────────────────────────────────────────────────────
-function HeroSection({setPage}){return(<section style={{background:`linear-gradient(135deg,${C.dark} 0%,#2D1810 50%,#3D1F0D 100%)`,minHeight:"88vh",display:"flex",alignItems:"center",position:"relative",overflow:"hidden"}}><div style={{position:"absolute",inset:0,backgroundImage:"radial-gradient(circle at 70% 50%,rgba(232,116,59,.15) 0%,transparent 60%)"}}/><div style={{maxWidth:1200,margin:"0 auto",padding:"80px 24px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:60,alignItems:"center"}}><div className="fade-up"><div style={{display:"inline-flex",alignItems:"center",gap:8,background:"rgba(232,116,59,.2)",border:"1px solid rgba(232,116,59,.4)",borderRadius:20,padding:"6px 14px",marginBottom:22}}><span style={{color:C.primary,fontSize:12,fontWeight:600,letterSpacing:1}}>✦ PREMIUM PRIVATE DINING</span></div><h1 style={{fontFamily:F.heading,fontSize:"clamp(34px,5vw,54px)",fontWeight:700,color:"white",lineHeight:1.15,marginBottom:18}}>Book a Private Chef for <em style={{color:C.primary}}>Unforgettable</em> Dining at Home</h1><p style={{color:"rgba(255,255,255,.65)",fontSize:16,lineHeight:1.7,marginBottom:32,maxWidth:480}}>Enjoy restaurant-quality meals prepared by verified professional chefs in the comfort of your home. Price confirmed by chef after booking.</p><div style={{display:"flex",gap:11,flexWrap:"wrap",marginBottom:36}}><button className="btn-primary" style={{padding:"13px 28px",fontSize:15}} onClick={()=>setPage("chefs")}>Book a Chef</button><button className="btn-ghost" style={{padding:"13px 28px",fontSize:15}} onClick={()=>setPage("ai-menu")}>✨ AI Menu Planner</button></div><div style={{display:"flex",gap:22,flexWrap:"wrap"}}>{[["✓ Verified Chefs","Background-checked"],["🛡️ Hygienic","Certified standards"],["⭐ 4.8/5 Rating","Satisfaction"]].map(([t,s])=><div key={t}><div style={{color:"white",fontSize:13,fontWeight:600}}>{t}</div><div style={{color:"rgba(255,255,255,.5)",fontSize:12}}>{s}</div></div>)}</div></div><div className="hide-mobile" style={{display:"flex",justifyContent:"center"}}><div style={{position:"relative"}}><div style={{width:380,height:420,borderRadius:24,background:"linear-gradient(135deg,#3D2010,#5C3020)",border:"1px solid rgba(232,116,59,.3)",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16,padding:32}}><div style={{fontSize:72}}>👨‍🍳</div><div style={{textAlign:"center"}}><div style={{fontFamily:F.heading,fontSize:18,color:"white",marginBottom:8}}>Private Chef Experience</div><div style={{color:C.primary,fontSize:13,marginBottom:14}}>⭐ 4.9 · 120+ Reviews · Verified</div><div style={{background:"rgba(232,116,59,.2)",borderRadius:10,padding:"8px 14px",color:"rgba(255,255,255,.8)",fontSize:12,marginBottom:14}}>💡 Chef sends you a personalised menu + price after booking</div><button className="btn-primary" style={{padding:"10px 26px"}} onClick={()=>setPage("chefs")}>Browse Chefs</button></div></div><div style={{position:"absolute",top:-18,right:-18,background:C.primary,borderRadius:12,padding:"9px 14px",color:"white",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(232,116,59,.4)"}}>🎉 Just booked!</div></div></div></div></section>);}
-function FeaturesRow(){return(<div style={{background:C.dark,padding:"26px 24px"}}><div style={{maxWidth:1200,margin:"0 auto",display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:18}}>{[["✓","Verified Chefs","Background-checked"],["💡","Proposal System","Chef sends menu & price"],["🍽️","Custom Menus","Tailored for your event"],["🧹","Hassle-Free","Cook, serve & clean"]].map(([ic,t,d])=><div key={t} style={{display:"flex",alignItems:"flex-start",gap:12}}><span style={{fontSize:20,flexShrink:0}}>{ic}</span><div><div style={{color:"white",fontWeight:600,fontSize:13}}>{t}</div><div style={{color:"rgba(255,255,255,.5)",fontSize:12,marginTop:2}}>{d}</div></div></div>)}</div></div>);}
-function PopularExperiences({setPage}){return(<section style={{padding:"70px 24px",background:"white"}}><div style={{maxWidth:1200,margin:"0 auto"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:36}}><div><div style={{color:C.primary,fontSize:13,fontWeight:600,letterSpacing:1,marginBottom:7}}>✦ EXPERIENCES</div><h2 style={{fontFamily:F.heading,fontSize:34,fontWeight:700}}>Popular Experiences</h2></div><button className="btn-outline" style={{fontSize:13}} onClick={()=>setPage("experiences")}>View All</button></div><div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:18}}>{EXPERIENCES.map(exp=><div key={exp.name} className="card" style={{cursor:"pointer"}} onClick={()=>setPage("chefs")}><div style={{height:140,background:`linear-gradient(135deg,${C.dark}22,${C.primary}22)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:52}}>{exp.emoji}</div><div style={{padding:14}}><div style={{fontFamily:F.heading,fontSize:15,fontWeight:600,marginBottom:4}}>{exp.name}</div><div style={{fontSize:12,color:C.muted,marginBottom:7}}>by {exp.chef}</div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><Stars value={exp.rating}/><span style={{fontSize:12,color:C.muted}}> ({exp.count})</span></div><div style={{fontSize:12,fontWeight:600,color:C.primary}}>Price on Request</div></div></div></div>)}</div></div></section>);}
-function HowItWorks(){return(<section style={{padding:"70px 24px",background:C.surface}}><div style={{maxWidth:1200,margin:"0 auto"}}><div style={{textAlign:"center",marginBottom:44}}><div style={{color:C.primary,fontSize:13,fontWeight:600,letterSpacing:1,marginBottom:7}}>✦ PROCESS</div><h2 style={{fontFamily:F.heading,fontSize:34,fontWeight:700}}>How It Works</h2></div><div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:16}}>{[["🔍","Choose a Chef","Browse and request"],["📝","Chef Proposes","Menu & price sent"],["🔧","Admin Reviews","Maintenance admin approves"],["✅","You Approve & Pay","Confirm via PayHere"],["🍽️","Enjoy","Chef cooks, serves & cleans"]].map((s,i)=><div key={s[1]} style={{textAlign:"center",padding:"24px 16px",background:"white",borderRadius:16,border:`1px solid ${C.border}`,position:"relative"}}><div style={{width:52,height:52,borderRadius:"50%",background:C.primaryLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,margin:"0 auto 12px"}}>{s[0]}</div><div style={{position:"absolute",top:14,left:14,width:22,height:22,borderRadius:"50%",background:C.primary,color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700}}>{i+1}</div><div style={{fontFamily:F.heading,fontSize:15,fontWeight:600,marginBottom:6}}>{s[1]}</div><div style={{fontSize:12,color:C.muted,lineHeight:1.5}}>{s[2]}</div></div>)}</div></div></section>);}
-function StatsRow(){return(<div style={{background:`linear-gradient(135deg,${C.dark},#2D1810)`,padding:"36px 24px"}}><div style={{maxWidth:1200,margin:"0 auto",display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:18,textAlign:"center"}}>{[["500+","Happy Customers"],["50+","Verified Chefs"],["1000+","Completed Events"],["4.9/5","Customer Rating"]].map(([v,l])=><div key={l}><div style={{fontFamily:F.heading,fontSize:34,fontWeight:700,color:C.primary}}>{v}</div><div style={{color:"rgba(255,255,255,.6)",fontSize:14,marginTop:4}}>{l}</div></div>)}</div></div>);}
-function TrustSection(){return(<div style={{background:C.dark,padding:"36px 24px"}}><div style={{maxWidth:1200,margin:"0 auto",display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:14,textAlign:"center"}}>{[["🛡️","Verified & Trusted"],["🔒","Secure Payments"],["⭐","Real Reviews"],["🕐","24/7 Support"],["🧼","Hygienic & Safe"],["🏆","Best Quality"]].map(([ic,t])=><div key={t}><div style={{fontSize:26,marginBottom:7}}>{ic}</div><div style={{color:"white",fontSize:12,fontWeight:600}}>{t}</div></div>)}</div></div>);}
-function Footer({setPage}){return(<footer style={{background:C.dark,color:"rgba(255,255,255,.6)",padding:"44px 24px 22px"}}><div style={{maxWidth:1200,margin:"0 auto"}}><div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr",gap:36,marginBottom:32}}><div><div style={{fontFamily:F.heading,fontSize:20,color:"white",marginBottom:10}}>Chef<span style={{color:C.primary}}>at</span>Home</div><p style={{fontSize:13,lineHeight:1.7,maxWidth:260}}>Sri Lanka's premier private chef booking platform.</p></div>{[["Platform",["Browse Chefs","Experiences","Pricing","AI Menu"]],["Support",["Help Centre","FAQs","Refund Policy","WhatsApp"]],["Legal",["Terms","Privacy","Chef Policy","Food Safety"]]].map(([t,ls])=><div key={t}><div style={{color:"white",fontWeight:600,marginBottom:11,fontSize:13}}>{t}</div>{ls.map(l=><div key={l} style={{fontSize:12,marginBottom:7,cursor:"pointer"}}>{l}</div>)}</div>)}</div><div style={{borderTop:"1px solid rgba(255,255,255,.1)",paddingTop:18,display:"flex",justifyContent:"space-between",fontSize:12}}><span>© 2026 ChefAtHome. All rights reserved.</span><span>Made with ❤️ in Sri Lanka 🇱🇰</span></div></div></footer>);}
+function HeroSection({setPage}){return(<section style={{background:`linear-gradient(135deg,${C.dark} 0%,#2D1810 50%,#3D1F0D 100%)`,minHeight:"88vh",display:"flex",alignItems:"center",position:"relative",overflow:"hidden"}}><div style={{position:"absolute",inset:0,backgroundImage:"radial-gradient(circle at 70% 50%,rgba(232,116,59,.15) 0%,transparent 60%)"}}/><div style={{maxWidth:1200,margin:"0 auto",padding:"60px 20px",width:"100%"}} className="hero-grid"><div className="fade-up"><div style={{display:"inline-flex",alignItems:"center",gap:8,background:"rgba(232,116,59,.2)",border:"1px solid rgba(232,116,59,.4)",borderRadius:20,padding:"6px 14px",marginBottom:18}}><span style={{color:C.primary,fontSize:12,fontWeight:600,letterSpacing:1}}>✦ PREMIUM PRIVATE DINING</span></div><h1 style={{fontFamily:F.heading,fontSize:"clamp(28px,5vw,54px)",fontWeight:700,color:"white",lineHeight:1.2,marginBottom:16}}>Book a Private Chef for <em style={{color:C.primary}}>Unforgettable</em> Dining at Home</h1><p style={{color:"rgba(255,255,255,.65)",fontSize:"clamp(14px,2vw,16px)",lineHeight:1.7,marginBottom:26,maxWidth:480}}>Enjoy restaurant-quality meals prepared by verified professional chefs in the comfort of your home.</p><div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:28}}><button className="btn-primary" style={{padding:"12px 24px",fontSize:15}} onClick={()=>setPage("chefs")}>Book a Chef</button><button className="btn-ghost" style={{padding:"12px 24px",fontSize:15}} onClick={()=>setPage("ai-menu")}>✨ AI Menu</button></div><div style={{display:"flex",gap:18,flexWrap:"wrap"}}>{[["✓ Verified Chefs","Background-checked"],["🛡️ Hygienic","Certified"],["⭐ 4.8/5","Satisfaction"]].map(([t,s])=><div key={t}><div style={{color:"white",fontSize:13,fontWeight:600}}>{t}</div><div style={{color:"rgba(255,255,255,.5)",fontSize:12}}>{s}</div></div>)}</div></div><div className="hide-mobile" style={{display:"flex",justifyContent:"center"}}><div style={{position:"relative"}}><div style={{width:360,height:400,borderRadius:24,background:"linear-gradient(135deg,#3D2010,#5C3020)",border:"1px solid rgba(232,116,59,.3)",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:14,padding:28}}><div style={{fontSize:68}}>👨‍🍳</div><div style={{textAlign:"center"}}><div style={{fontFamily:F.heading,fontSize:17,color:"white",marginBottom:7}}>Private Chef Experience</div><div style={{color:C.primary,fontSize:13,marginBottom:12}}>⭐ 4.9 · 120+ Reviews · Verified</div><div style={{background:"rgba(232,116,59,.2)",borderRadius:10,padding:"8px 12px",color:"rgba(255,255,255,.8)",fontSize:12,marginBottom:12}}>💡 Chef sends personalised menu + price after booking</div><button className="btn-primary" style={{padding:"10px 24px"}} onClick={()=>setPage("chefs")}>Browse Chefs</button></div></div><div style={{position:"absolute",top:-16,right:-16,background:C.primary,borderRadius:12,padding:"8px 13px",color:"white",fontSize:12,fontWeight:600,boxShadow:"0 8px 24px rgba(232,116,59,.4)"}}>🎉 Just booked!</div></div></div></div></section>);}
+function FeaturesRow(){return(<div style={{background:C.dark,padding:"22px 16px"}}><div style={{maxWidth:1200,margin:"0 auto",display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}><style>{`@media(min-width:640px){.feat-grid{grid-template-columns:repeat(4,1fr)!important}}`}</style>{[["✓","Verified Chefs","Background-checked"],["💡","Proposal System","Chef sends menu & price"],["🍽️","Custom Menus","Tailored for you"],["🧹","Hassle-Free","Cook, serve & clean"]].map(([ic,t,d])=><div key={t} style={{display:"flex",alignItems:"flex-start",gap:10}}><span style={{fontSize:18,flexShrink:0}}>{ic}</span><div><div style={{color:"white",fontWeight:600,fontSize:13}}>{t}</div><div style={{color:"rgba(255,255,255,.5)",fontSize:12,marginTop:1}}>{d}</div></div></div>)}</div></div>);}
+function PopularExperiences({setPage}){return(<section style={{padding:"50px 16px",background:"white"}}><div style={{maxWidth:1200,margin:"0 auto"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}><div><div style={{color:C.primary,fontSize:12,fontWeight:600,letterSpacing:1,marginBottom:5}}>✦ EXPERIENCES</div><h2 style={{fontFamily:F.heading,fontSize:"clamp(22px,4vw,32px)",fontWeight:700}}>Popular Experiences</h2></div><button className="btn-outline" style={{fontSize:12,padding:"8px 16px",flexShrink:0}} onClick={()=>setPage("experiences")}>View All</button></div><div className="r4">{EXPERIENCES.map(exp=><div key={exp.name} className="card" style={{cursor:"pointer"}} onClick={()=>setPage("chefs")}><div style={{height:120,background:`linear-gradient(135deg,${C.dark}22,${C.primary}22)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:44}}>{exp.emoji}</div><div style={{padding:12}}><div style={{fontFamily:F.heading,fontSize:14,fontWeight:600,marginBottom:3}}>{exp.name}</div><div style={{fontSize:11,color:C.muted,marginBottom:6}}>by {exp.chef}</div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><Stars value={exp.rating}/><span style={{fontSize:11,color:C.muted}}> ({exp.count})</span></div><div style={{fontSize:11,fontWeight:600,color:C.primary}}>Price on Request</div></div></div></div>)}</div></div></section>);}
+function HowItWorks(){return(<section style={{padding:"50px 16px",background:C.surface}}><div style={{maxWidth:1200,margin:"0 auto"}}><div style={{textAlign:"center",marginBottom:32}}><div style={{color:C.primary,fontSize:13,fontWeight:600,letterSpacing:1,marginBottom:7}}>✦ PROCESS</div><h2 style={{fontFamily:F.heading,fontSize:"clamp(24px,4vw,34px)",fontWeight:700}}>How It Works</h2></div><div className="r5">{[["🔍","Choose a Chef","Browse and request"],["📝","Chef Proposes","Menu & price sent"],["🔧","Admin Reviews","Maintenance admin approves"],["✅","Approve & Pay","Confirm via PayHere"],["🍽️","Enjoy","Chef cooks & cleans"]].map((s,i)=><div key={s[1]} style={{textAlign:"center",padding:"20px 12px",background:"white",borderRadius:14,border:`1px solid ${C.border}`,position:"relative"}}><div style={{width:48,height:48,borderRadius:"50%",background:C.primaryLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,margin:"0 auto 10px"}}>{s[0]}</div><div style={{position:"absolute",top:12,left:12,width:20,height:20,borderRadius:"50%",background:C.primary,color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700}}>{i+1}</div><div style={{fontFamily:F.heading,fontSize:14,fontWeight:600,marginBottom:4}}>{s[1]}</div><div style={{fontSize:12,color:C.muted,lineHeight:1.4}}>{s[2]}</div></div>)}</div></div></section>);}
+function StatsRow(){return(<div style={{background:`linear-gradient(135deg,${C.dark},#2D1810)`,padding:"32px 16px"}}><div style={{maxWidth:1200,margin:"0 auto",display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,textAlign:"center"}}>{[["500+","Happy Customers"],["50+","Verified Chefs"],["1000+","Completed Events"],["4.9/5","Customer Rating"]].map(([v,l])=><div key={l}><div style={{fontFamily:F.heading,fontSize:"clamp(26px,6vw,34px)",fontWeight:700,color:C.primary}}>{v}</div><div style={{color:"rgba(255,255,255,.6)",fontSize:13,marginTop:3}}>{l}</div></div>)}</div></div>);}
+function TrustSection(){return(<div style={{background:C.dark,padding:"28px 16px"}}><div style={{maxWidth:1200,margin:"0 auto",display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,textAlign:"center"}}>{[["🛡️","Verified & Trusted"],["🔒","Secure Payments"],["⭐","Real Reviews"],["🕐","24/7 Support"],["🧼","Hygienic & Safe"],["🏆","Best Quality"]].map(([ic,t])=><div key={t}><div style={{fontSize:22,marginBottom:5}}>{ic}</div><div style={{color:"white",fontSize:11,fontWeight:600}}>{t}</div></div>)}</div></div>);}
+function Footer({setPage}){return(<footer style={{background:C.dark,color:"rgba(255,255,255,.6)",padding:"36px 16px 22px"}}><div style={{maxWidth:1200,margin:"0 auto"}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,marginBottom:24}}><div><div style={{fontFamily:F.heading,fontSize:18,color:"white",marginBottom:8}}>Chef<span style={{color:C.primary}}>at</span>Home</div><p style={{fontSize:12,lineHeight:1.6,maxWidth:220}}>Sri Lanka's premier private chef booking platform.</p></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>{[["Platform",["Browse Chefs","Pricing","AI Menu"]],["Support",["Help","FAQs","WhatsApp"]]].map(([t,ls])=><div key={t}><div style={{color:"white",fontWeight:600,marginBottom:8,fontSize:12}}>{t}</div>{ls.map(l=><div key={l} style={{fontSize:12,marginBottom:6,cursor:"pointer"}}>{l}</div>)}</div>)}</div></div><div style={{borderTop:"1px solid rgba(255,255,255,.1)",paddingTop:16,display:"flex",flexWrap:"wrap",gap:8,justifyContent:"space-between",fontSize:11}}><span>© 2026 ChefAtHome.</span><span>Made with ❤️ in Sri Lanka 🇱🇰</span></div></div></footer>);}
 
 // ─── Chef Card & Pages ────────────────────────────────────────────────────────
 function ChefCard({chef,onClick}){
@@ -934,26 +1176,35 @@ function CustomerDashboard({user,setPage,loginKey}) {
   const [payTarget,setPayTarget]=useState(null);
   const [showChefApp,setShowChefApp]=useState(false);
 
-  const refresh=()=>setMyBookings(loadBookings().filter(b=>b.customerEmail===user?.email));
-  useEffect(()=>{ refresh(); },[user?.email,loginKey,reviewTarget,payTarget]);
+  const refresh=()=>sbLoadBookings().then(all=>setMyBookings(all.filter(b=>b.customerEmail===user?.email)));
+  useEffect(()=>{ sbLoadBookings().then(all=>setMyBookings(all.filter(b=>b.customerEmail===user?.email))); },[user?.email,loginKey,reviewTarget,payTarget]);
 
   const upcoming=myBookings.filter(b=>!isBookingPast(b)&&b.status!=="cancelled"&&b.status!=="completed");
   const past=myBookings.filter(b=>isBookingPast(b)||b.status==="completed");
   const proposalReady=myBookings.filter(b=>b.status==="proposal_accepted");
   const pendingReview=past.filter(b=>!b.reviewed&&b.status==="confirmed");
   const reviews=loadReviews().filter(r=>r.customerEmail===user?.email);
-  const apps=loadApps(); const myApp=apps.find(a=>a.email===user?.email);
+  const [myApp,setMyApp]=useState(()=>loadApps().find(a=>a.email===user?.email)||null);
+  useEffect(()=>{sbLoadApps().then(apps=>setMyApp(apps.find(a=>a.email===user?.email)||null));},[user?.email]);
 
-  if(showChefApp) return <div style={{maxWidth:680,margin:"0 auto",padding:"36px 22px"}}><ChefJoinRequestForm user={user} onSubmit={()=>{setShowChefApp(false);setTab("become-chef");}} onCancel={()=>setShowChefApp(false)}/></div>;
+  if(showChefApp) return <div style={{maxWidth:680,margin:"0 auto",padding:"36px 22px"}}><ChefJoinRequestForm user={user} onSubmit={(app)=>{setMyApp(app);setShowChefApp(false);setTab("become-chef");}} onCancel={()=>setShowChefApp(false)}/></div>;
 
   return(
-    <div style={{display:"flex",minHeight:"calc(100vh - 64px)"}}>
-      <div style={{width:220,background:C.darkNav,padding:"22px 11px",flexShrink:0}}>
-        <div style={{padding:"0 7px 18px",borderBottom:"1px solid rgba(255,255,255,.1)",marginBottom:13}}>
-          <Avatar initials={user?.name?.split(" ").map(n=>n[0]).join("").slice(0,2)||"U"} size={40}/>
-          <div style={{color:"white",fontWeight:600,fontSize:13,marginTop:8}}>{user?.name}</div>
-          <div style={{color:"rgba(255,255,255,.5)",fontSize:11}}>Customer</div>
-        </div>
+    <div style={{display:"flex",flexDirection:"column",minHeight:"calc(100vh - 60px)"}}>
+      {/* Mobile scroll tabs */}
+      <div className="show-mobile mob-scroll-tabs" style={{display:"flex"}}>
+        {[["overview","🏠","Home"],["upcoming","📅","Upcoming"],["proposals","📋","Proposals"],["history","🗂","History"],["reviews","⭐","Reviews"],["become-chef","👨‍🍳","Chef"],["support","💬","Support"]].map(([id,ic,l])=>(
+          <button key={id} className={`mob-scroll-tab ${tab===id?"active":""}`} onClick={()=>setTab(id)}>{ic} {l}</button>
+        ))}
+      </div>
+      <div className="panel-layout" style={{flex:1}}>
+        {/* Desktop sidebar */}
+        <div className="panel-sidebar">
+          <div style={{padding:"0 7px 16px",borderBottom:"1px solid rgba(255,255,255,.1)",marginBottom:11}}>
+            <Avatar initials={user?.name?.split(" ").map(n=>n[0]).join("").slice(0,2)||"U"} size={38}/>
+            <div style={{color:"white",fontWeight:600,fontSize:13,marginTop:7}}>{user?.name}</div>
+            <div style={{color:"rgba(255,255,255,.5)",fontSize:11}}>Customer</div>
+          </div>
         {[["overview","🏠","Overview"],["upcoming","📅","Upcoming",upcoming.length],["proposals","📋","Proposals",proposalReady.length],["history","🗂","History"],["reviews","⭐","Reviews",pendingReview.length],["become-chef","👨‍🍳","Become a Chef"],["support","💬","Support"]].map(([id,ic,l,cnt])=>(
           <div key={id} className={`sidebar-link ${tab===id?"active":""}`} onClick={()=>setTab(id)} style={{position:"relative"}}>
             <span>{ic}</span><span>{l}</span>
@@ -962,7 +1213,7 @@ function CustomerDashboard({user,setPage,loginKey}) {
         ))}
       </div>
 
-      <div style={{flex:1,padding:28,background:C.surface,overflowY:"auto"}} key={`dash-${loginKey}`}>
+      <div style={{flex:1,padding:28,background:C.surface,overflowY:"auto",minWidth:0}} className="panel-content" key={`dash-${loginKey}`}>
 
         {tab==="overview"&&(
           <div>
@@ -978,7 +1229,7 @@ function CustomerDashboard({user,setPage,loginKey}) {
                 <span style={{fontWeight:700,color:C.warn}}>⭐ {pendingReview.length} booking{pendingReview.length>1?"s":""} awaiting your review</span><span style={{marginLeft:"auto",color:C.warn}}>Rate →</span>
               </div>
             )}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:13,marginBottom:22}}>
+            <div className="r3" style={{marginBottom:22}}>
               <MetricCard label="Total Requests" value={myBookings.length}/>
               <MetricCard label="Upcoming" value={upcoming.length} color={C.warn}/>
               <MetricCard label="Completed" value={past.filter(b=>b.status==="confirmed"||b.status==="completed").length} color={C.success}/>
@@ -1085,6 +1336,8 @@ function CustomerDashboard({user,setPage,loginKey}) {
 
         {tab==="support"&&<div><h2 style={{fontFamily:F.heading,fontSize:21,marginBottom:18}}>Help & Support</h2><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:13}}>{[["📋","FAQs"],["💸","Refund Help"],["👨‍🍳","Chef Support"],["💬","WhatsApp Chat"]].map(([ic,t])=><div key={t} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:18,cursor:"pointer"}}><div style={{fontSize:26,marginBottom:7}}>{ic}</div><div style={{fontWeight:600,fontSize:14}}>{t}</div></div>)}</div></div>}
       </div>
+      </div>
+
 
       {reviewTarget&&<ReviewModal booking={reviewTarget} onClose={()=>{setReviewTarget(null);refresh();}}/>}
       {payTarget&&<ProposalPayModal booking={payTarget} onSuccess={()=>{setPayTarget(null);refresh();}} onClose={()=>setPayTarget(null)}/>}
@@ -1345,7 +1598,16 @@ function ChefJoinRequestForm({user,onSubmit,onCancel}) {
     setErrors(e);return Object.keys(e).length===0;
   };
   const DISTRICTS=["Colombo","Gampaha","Kalutara","Kandy","Matale","Nuwara Eliya","Galle","Matara","Hambantota","Jaffna","Kilinochchi","Mannar","Vavuniya","Batticaloa","Ampara","Trincomalee","Kurunegala","Puttalam","Anuradhapura","Polonnaruwa","Badulla","Monaragala","Ratnapura","Kegalle"];
-  const submit=()=>{const apps=loadApps();apps.push({id:genId(),userId:user?.id,email:user?.email,...form,submittedAt:new Date().toISOString(),status:"pending"});saveApps(apps);window.dispatchEvent(new StorageEvent("storage",{key:K.apps}));onSubmit();};
+  const [submitting,setSubmitting]=useState(false);
+  const submit=async()=>{
+    if(submitting) return;
+    setSubmitting(true);
+    const app={id:genId(),userId:user?.id,email:user?.email,...form,submittedAt:new Date().toISOString(),status:"pending"};
+    await sbSaveApp(app);
+    window.dispatchEvent(new StorageEvent("storage",{key:K.apps}));
+    setSubmitting(false);
+    onSubmit(app);
+  };
   const STEPS=["Personal","Address & Skills","Documents","Review"];
   return(<div style={{background:"white",borderRadius:18,border:`1px solid ${C.border}`,padding:28,maxWidth:640,margin:"0 auto"}}>
     <button onClick={onCancel} style={{background:"none",border:"none",color:C.muted,fontSize:13,marginBottom:11,cursor:"pointer"}}>← Back</button>
@@ -1379,7 +1641,7 @@ function ChefJoinRequestForm({user,onSubmit,onCancel}) {
       <div style={{background:C.surface,borderRadius:11,padding:15,marginBottom:14}}>{[["Name",form.fullName],["NIC",form.nic],["Phone",form.phone],["Type",form.chefType==="premium"?"Premium":"Standard"],["Address",`${form.address}, ${form.city}, ${form.district}`],["Experience",form.experience]].filter(([k,v])=>v).map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${C.border}`,fontSize:12}}><span style={{color:C.muted}}>{k}</span><span style={{fontWeight:600,maxWidth:"55%",textAlign:"right"}}>{v}</span></div>)}</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>{[["🪪 NIC",form.nicFile],["🚔 Police",form.policeFile],["📸 Photo",form.photoFile],["🎓 Certs",form.certFile]].map(([l,f])=><div key={l} style={{background:f?.data?C.successBg:C.surface,borderRadius:7,padding:"7px 10px",fontSize:11,border:`1px solid ${f?.data?C.success+"44":C.border}`}}><div style={{color:C.muted}}>{l}</div><div style={{fontWeight:700,color:f?.data?C.success:C.muted}}>{f?.data?"✓ Uploaded":"– Not uploaded"}</div></div>)}</div>
       <div style={{background:C.warnBg,borderRadius:9,padding:9,fontSize:12,color:C.warn,marginBottom:13}}>⏳ Super admin reviews within 2–3 business days.</div>
-      <button className="btn-primary" style={{width:"100%",padding:12,fontSize:14}} onClick={submit}>Submit Application →</button>
+      <button className="btn-primary" style={{width:"100%",padding:12,fontSize:14,opacity:submitting?0.7:1}} onClick={submit} disabled={submitting}>{submitting?"Submitting...":"Submit Application →"}</button>
     </div>}
     {step<4&&<div style={{display:"flex",gap:9,marginTop:18}}>{step>1&&<button className="btn-outline" style={{flex:1,padding:10}} onClick={()=>setStep(s=>s-1)}>← Back</button>}<button className="btn-primary" style={{flex:2,padding:10}} onClick={()=>{if(validate())setStep(s=>s+1);}}>Continue →</button></div>}
   </div>);
@@ -1403,7 +1665,7 @@ function MaintenanceAdminPanel({user,loginKey}) {
   const [toastMsg,setToastMsg]=useState("");
   const [confirmAction,setConfirmAction]=useState(null);
 
-  const refresh=()=>setTick(t=>t+1);
+  const refresh=()=>{sbLoadBookings();sbLoadProposals();setTick(t=>t+1);};
 
   const toast=(msg)=>{setToastMsg(msg);setTimeout(()=>setToastMsg(""),3000);};
 
@@ -1598,14 +1860,19 @@ function MaintenanceAdminPanel({user,loginKey}) {
   };
 
   return(
-    <div style={{display:"flex",minHeight:"calc(100vh - 64px)"}}>
+    <div style={{display:"flex",flexDirection:"column",minHeight:"calc(100vh - 60px)"}}>
       <ProposalModal/>
       <BookingModal/>
       <ConfirmModal/>
-      {/* Toast */}
-      {toastMsg&&<div style={{position:"fixed",bottom:28,right:28,background:C.dark,color:"white",padding:"11px 20px",borderRadius:10,fontSize:14,fontWeight:600,zIndex:9999,boxShadow:"0 4px 20px rgba(0,0,0,.3)"}}>{toastMsg}</div>}
-      {/* Sidebar */}
-      <div style={{width:230,background:"#0C1A2E",padding:"22px 11px",flexShrink:0}}>
+      {toastMsg&&<div style={{position:"fixed",bottom:80,right:16,background:C.dark,color:"white",padding:"11px 18px",borderRadius:10,fontSize:13,fontWeight:600,zIndex:9999,boxShadow:"0 4px 20px rgba(0,0,0,.3)"}}>{toastMsg}</div>}
+      {/* Mobile scroll tabs */}
+      <div className="show-mobile mob-scroll-tabs" style={{display:"flex"}}>
+        {[["dashboard","📊","Dashboard"],["proposals","📋",`Proposals${pendingProposals>0?` (${pendingProposals})`:""}`],["all-proposals","🗂","All"],["bookings","📅","Bookings"],["chefs","👨‍🍳","Chefs"],["activity","🕐","Activity"]].map(([id,ic,l])=>(
+          <button key={id} className={`mob-scroll-tab ${tab===id?"active":""}`} onClick={()=>{setTab(id);refresh();}}>{ic} {l}</button>
+        ))}
+      </div>
+      <div className="panel-layout" style={{flex:1}}>
+      <div className="panel-sidebar" style={{background:"#0C1A2E",padding:"22px 11px"}}>
         <div style={{padding:"0 7px 18px",borderBottom:"1px solid rgba(255,255,255,.08)",marginBottom:13}}>
           <div style={{fontFamily:F.heading,fontSize:15,color:"white",fontWeight:700}}>🔧 Maintenance Admin</div>
           <div style={{color:"rgba(255,255,255,.4)",fontSize:11,marginTop:2}}>{user?.email}</div>
@@ -1619,7 +1886,7 @@ function MaintenanceAdminPanel({user,loginKey}) {
       </div>
 
       {/* Main Content */}
-      <div style={{flex:1,padding:28,background:C.surface,overflowY:"auto"}} key={`maint-${loginKey}-${tick}`}>
+      <div className="panel-content" style={{flex:1,background:C.surface,overflowY:"auto"}} key={`maint-${loginKey}-${tick}`}>
 
         {/* ── Dashboard ── */}
         {tab==="dashboard"&&(
@@ -1840,11 +2107,12 @@ function MaintenanceAdminPanel({user,loginKey}) {
         )}
 
       </div>
+      </div>
     </div>
   );
 }
 
-// ─── Maintenance Admin Manager (whitelist-only) ───────────────────────────────
+// ─── Maintenance Admin Manager
 function MaintAdminManager({setUserRole,removeUserRole,allUsers}) {
   const [emails,setEmails]=useState(loadMaintAdminEmails);
   const [input,setInput]=useState("");
@@ -2133,9 +2401,11 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
   const isSupportAdminUser=panelUser?.role==="support_admin";
   const [tab,setTab]=useState("dashboard");
   const [settings,setSettings]=useState(loadSettings);
-  const [pendingApps,setPendingApps]=useState(()=>loadApps().filter(a=>a.status==="pending"));
+  const [pendingApps,setPendingApps]=useState([]);
+  const [allApps,setAllApps]=useState([]);
   const [feeSugs,setFeeSugs]=useState(()=>loadFeeSugs().filter(s=>s.status==="pending"));
   const [allBookings,setAllBookings]=useState(loadBookings);
+  useEffect(()=>{sbLoadApps().then(apps=>{setAllApps(apps);setPendingApps(apps.filter(a=>a.status==="pending"));});},[]);
   const [allProposals,setAllProposals]=useState(loadProposals);
   const [chefFeeMap,setChefFeeMap]=useState(loadChefFees);
   const [viewApp,setViewApp]=useState(null);
@@ -2155,11 +2425,12 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
     return merged;
   };
   const [allUsers,setAllUsers]=useState(loadAllUsers);
+  useEffect(()=>{sbLoadUsers().then(users=>setAllUsers(users));},[]);
 
   const refresh=()=>{
-    setAllBookings(loadBookings());
-    setAllProposals(loadProposals());
-    setPendingApps(loadApps().filter(a=>a.status==="pending"));
+    sbLoadBookings().then(setAllBookings);
+    sbLoadProposals().then(setAllProposals);
+    sbLoadApps().then(apps=>{setAllApps(apps);setPendingApps(apps.filter(a=>a.status==="pending"));});
     setFeeSugs(loadFeeSugs().filter(s=>s.status==="pending"));
     setChefFeeMap(loadChefFees());
     setAllUsers(loadAllUsers());
@@ -2172,8 +2443,8 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
 
   useEffect(()=>{
     const doRefresh=()=>{
-      setAllBookings(loadBookings());
-      setAllProposals(loadProposals());
+      sbLoadBookings().then(setAllBookings);
+      sbLoadProposals().then(setAllProposals);
       const apps=loadApps();
       setPendingApps(apps.filter(a=>a.status==="pending"));
       setFeeSugs(loadFeeSugs().filter(s=>s.status==="pending"));
@@ -2231,6 +2502,7 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
   };
 
   const approveApp=(id)=>{
+    sbUpdateAppStatus(id,"approved");
     const apps=loadApps();
     const i=apps.findIndex(a=>a.id===id);
     if(i>=0){
@@ -2263,7 +2535,7 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
     setViewApp(null);
     refresh();
   };
-  const rejectApp=(id)=>{const apps=loadApps();const i=apps.findIndex(a=>a.id===id);if(i>=0){apps[i].status="rejected";saveApps(apps);}setPendingApps(p=>p.filter(a=>a.id!==id));setViewApp(null);};
+  const rejectApp=async(id)=>{await sbUpdateAppStatus(id,"rejected");setPendingApps(p=>p.filter(a=>a.id!==id));setViewApp(null);};
   const setChefStarting=(chefId,data)=>{const fees=loadChefFees();fees[chefId]={...fees[chefId],...data};saveChefFees(fees);setChefFeeMap({...fees});setEditFee(null);};
   const approveSug=(sug)=>{const chef=getAllChefs().find(c=>c.alias===sug.chefAlias);if(chef){const fees=loadChefFees();fees[chef.id]={...fees[chef.id],startingFrom:sug.suggestAllIn,cookStartingFrom:sug.suggestCook};saveChefFees(fees);}const all=loadFeeSugs().map(s=>s.id===sug.id?{...s,status:"approved"}:s);saveFeeSugs(all);setFeeSugs(p=>p.filter(s=>s.id!==sug.id));};
 
@@ -2385,9 +2657,16 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
   const getRoleDisplay=(email)=>{ const stored=loadUsers().find(u=>u.email===email); return userRoles[email]||stored?.role||"customer"; };
 
   return(
-    <div style={{display:"flex",minHeight:"calc(100vh - 64px)"}}>
+    <div style={{display:"flex",flexDirection:"column",minHeight:"calc(100vh - 60px)"}}>
       {appModalJSX}{feeModalJSX}{suspendModalJSX}
-      <div style={{width:240,background:"#0A0F1E",padding:"22px 11px",flexShrink:0}}>
+      {/* Mobile scroll tabs */}
+      <div className="show-mobile mob-scroll-tabs" style={{display:"flex"}}>
+        {[["dashboard","📊","Dashboard"],["chef-apps","📋",`Apps${pendingApps.length>0?` (${pendingApps.length})`:""}`],["maint-admins","🔧","M.Admins"],!isSupportAdminUser&&["support-admins","🛡️","Support"],["chefs","👨‍🍳","Chefs"],["users","👥","Users"],["bookings","📅","Bookings"],["payments","💳","Payments"],["proposals","📝","Proposals"],["activity","🕐","Activity"],["settings","⚙️","Settings"]].filter(Boolean).map(([id,ic,l])=>(
+          <button key={id} className={`mob-scroll-tab ${tab===id?"active":""}`} onClick={()=>{setTab(id);refresh();}}>{ic} {l}</button>
+        ))}
+      </div>
+      <div className="panel-layout" style={{flex:1}}>
+      <div className="panel-sidebar" style={{width:240,background:"#0A0F1E",padding:"22px 11px"}}>
         <div style={{padding:"0 7px 18px",borderBottom:"1px solid rgba(255,255,255,.08)",marginBottom:13}}>
           <div style={{fontFamily:F.heading,fontSize:15,color:"white",fontWeight:700}}>🍽️ ChefAtHome</div>
           <div style={{color:isSupportAdminUser?C.info:C.primary,fontSize:11,marginTop:2}}>{isSupportAdminUser?"🛡️ Support Admin Panel":"⚡ Super Admin Panel"}</div>
@@ -2400,7 +2679,7 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
         ))}
       </div>
 
-      <div style={{flex:1,padding:28,background:C.surface,overflowY:"auto"}} key={`super-${loginKey}`}>
+      <div className="panel-content" style={{flex:1,background:C.surface,overflowY:"auto"}} key={`super-${loginKey}`}>
         {tab==="dashboard"&&(
           <div>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}>
@@ -2428,7 +2707,10 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
 
         {tab==="chef-apps"&&(
           <div>
-            <h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:6}}>Chef Applications</h2>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <h2 style={{fontFamily:F.heading,fontSize:20}}>Chef Applications</h2>
+              <button onClick={()=>sbLoadApps().then(apps=>{setAllApps(apps);setPendingApps(apps.filter(a=>a.status==="pending"));})} style={{background:C.infoBg,color:C.info,border:"none",borderRadius:7,padding:"7px 14px",fontWeight:600,fontSize:12,cursor:"pointer"}}>🔄 Refresh</button>
+            </div>
             <p style={{color:C.muted,marginBottom:18,fontSize:13}}>Verify documents and approve or reject chef registrations.</p>
             {pendingApps.length===0?<EmptyState icon="✅" text="No pending applications."/>:pendingApps.map(app=>(
               <div key={app.id} style={{background:"white",borderRadius:12,border:`1px solid ${C.border}`,padding:19,marginBottom:13}}>
@@ -2463,7 +2745,8 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
         {tab==="chefs"&&(
           <div>
             <h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:6}}>Chef Management</h2>
-            <p style={{color:C.muted,marginBottom:18,fontSize:13}}>Set starting prices, suspend chefs, and view order history. Only Super Admin can suspend chefs.</p>
+            <p style={{color:C.muted,marginBottom:12,fontSize:13}}>Set starting prices, suspend chefs, and view order history. Only Super Admin can suspend chefs.</p>
+            <input className="input" placeholder="🔍 Search by Chef ID (e.g. CHF-001) or name..." style={{marginBottom:16,fontSize:14}} onChange={e=>{const v=e.target.value.toLowerCase();document.querySelectorAll(".chef-row").forEach(el=>{const match=el.dataset.search?.toLowerCase().includes(v);el.style.display=match||!v?"block":"none";});}}/>
             {getAllChefs().map((c,idx)=>{
               const fee=chefFeeMap[c.id];
               const displayId=c.displayId||getStaticChefDisplayId(idx);
@@ -2471,9 +2754,8 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
               const chefProposals=allProposals.filter(p=>p.chefAlias===c.alias);
               const totalEarned=chefBookings.reduce((s,b)=>s+(b.amount||0),0);
               const completedOrders=chefBookings.filter(b=>b.status==="completed");
-              const [expanded,setExpanded]=[false,()=>{}]; // handled via expandedChef state below
               return(
-                <div key={c.id} style={{background:"white",borderRadius:11,border:`1px solid ${c.isDynamic?C.success:C.border}`,marginBottom:10,overflow:"hidden"}}>
+                <div key={c.id} className="chef-row" data-search={`${displayId} ${c.alias}`.toLowerCase()} style={{background:"white",borderRadius:11,border:`1px solid ${c.isDynamic?C.success:C.border}`,marginBottom:10,overflow:"hidden"}}>
                   {/* Chef row */}
                   <div style={{padding:17,display:"flex",alignItems:"center",gap:13,justifyContent:"space-between"}}>
                     <div style={{display:"flex",alignItems:"center",gap:11}}>
@@ -2488,19 +2770,22 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
                         </div>
                       </div>
                     </div>
-                    <div style={{display:"flex",alignItems:"center",gap:11}}>
-                      {/* Quick stats */}
-                      <div style={{display:"flex",gap:14,marginRight:6}}>
-                        <div style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Orders</div><div style={{fontWeight:700,color:C.primary,fontSize:13}}>{chefBookings.length}</div></div>
-                        <div style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Earned</div><div style={{fontWeight:700,color:C.success,fontSize:13}}>{fmtLKR(totalEarned)}</div></div>
-                        <div style={{textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Starting</div><div style={{fontWeight:700,color:C.primary,fontSize:13}}>{fee?fmtLKR(fee.startingFrom||c.startingFrom):fmtLKR(c.startingFrom||0)}</div></div>
-                      </div>
-                      <button onClick={()=>setExpandedChef(expandedChef===c.id?null:c.id)} style={{background:C.surface,color:C.muted,padding:"6px 11px",borderRadius:6,fontSize:12,fontWeight:600,border:`1px solid ${C.border}`,cursor:"pointer"}}>{expandedChef===c.id?"▲ Hide":"📋 Orders"}</button>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      {/* Clickable quick stats */}
+                      <button onClick={()=>setExpandedChef(expandedChef===c.id?null:c.id)} style={{textAlign:"center",background:C.primaryLight,border:`1px solid ${C.primary}33`,borderRadius:8,padding:"6px 12px",cursor:"pointer"}}>
+                        <div style={{fontSize:10,color:C.muted}}>📋 Bookings</div><div style={{fontWeight:700,color:C.primary,fontSize:14}}>{chefBookings.length}</div>
+                      </button>
+                      <button onClick={()=>setExpandedChef(expandedChef===c.id?null:c.id)} style={{textAlign:"center",background:C.successBg,border:`1px solid ${C.success}33`,borderRadius:8,padding:"6px 12px",cursor:"pointer"}}>
+                        <div style={{fontSize:10,color:C.muted}}>✅ Done</div><div style={{fontWeight:700,color:C.success,fontSize:14}}>{completedOrders.length}</div>
+                      </button>
+                      <button onClick={()=>setExpandedChef(expandedChef===c.id?null:c.id)} style={{textAlign:"center",background:C.infoBg,border:`1px solid ${C.info}33`,borderRadius:8,padding:"6px 12px",cursor:"pointer"}}>
+                        <div style={{fontSize:10,color:C.muted}}>📝 Proposals</div><div style={{fontWeight:700,color:C.info,fontSize:14}}>{chefProposals.length}</div>
+                      </button>
                       <button onClick={()=>{setEditFee(c);setFeeForm({startingFrom:fee?.startingFrom||c.startingFrom||0,extraPerGuest:fee?.extraPerGuest||2000});}} style={{background:C.infoBg,color:C.info,padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✏️ Price</button>
-                      <button onClick={()=>setSuspendTarget({id:c.id,alias:c.alias,displayId})} style={{background:"#FFF7ED",color:"#C2410C",padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"1px solid #FDBA74",cursor:"pointer"}}>🚫 Suspend</button>
+                      <button onClick={()=>setSuspendTarget({id:c.id,alias:c.alias,displayId})} style={{background:"#FFF7ED",color:"#C2410C",padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"1px solid #FDBA74",cursor:"pointer"}}>🚫</button>
                     </div>
                   </div>
-                  {/* Expanded order history */}
+                  {/* Expanded detail view */}
                   {expandedChef===c.id&&(
                     <div style={{borderTop:`1px solid ${C.border}`,padding:"14px 17px",background:C.surface}}>
                       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
@@ -2752,11 +3037,10 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
           </div>
         )}
       </div>
+      </div>
     </div>
   );
 }
-
-// ─── Auth Modal ───────────────────────────────────────────────────────────────
 function AuthModal({mode,setMode,onClose}) {
   const {signIn,signUp,resetPassword}=useAuth();
   const [view,setView]=useState(mode);
@@ -2812,7 +3096,7 @@ function AuthModal({mode,setMode,onClose}) {
 }
 
 // ─── Static Pages ─────────────────────────────────────────────────────────────
-function PricingPage(){return(<div style={{maxWidth:1100,margin:"0 auto",padding:"60px 24px"}}><div style={{textAlign:"center",marginBottom:40}}><h1 style={{fontFamily:F.heading,fontSize:36,fontWeight:700,marginBottom:10}}>Transparent Pricing</h1><p style={{color:C.muted,fontSize:15,maxWidth:480,margin:"0 auto"}}>Starting prices shown. Exact price confirmed by chef's personalised proposal after booking.</p></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginBottom:36}}>{[{type:"Standard Chef",desc:"Budget-friendly home dining",color:C.success,tiers:[["2–4 guests","Starting from LKR 6,000"],["5–8 guests","Starting from LKR 12,000"],["9+ guests","Starting from LKR 18,000"]]},{type:"Premium Chef",desc:"Luxury private dining",color:"#B45309",tiers:[["2–4 guests","Starting from LKR 25,000"],["5–8 guests","Starting from LKR 40,000"],["9+ guests","Starting from LKR 70,000"]]}].map(p=><div key={p.type} style={{background:"white",borderRadius:18,border:`2px solid ${p.color}22`,padding:26}}><h3 style={{fontFamily:F.heading,fontSize:22,marginBottom:6}}>{p.type}</h3><p style={{color:C.muted,fontSize:13,marginBottom:14}}>{p.desc}</p>{p.tiers.map(([t,pr])=><div key={t} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:`1px solid ${C.border}`}}><span style={{fontSize:13,color:C.muted}}>{t}</span><span style={{fontSize:13,fontWeight:700,color:p.color}}>{pr}</span></div>)}</div>)}</div><div style={{background:`linear-gradient(135deg,${C.dark},#2D1810)`,borderRadius:18,padding:30,textAlign:"center",color:"white"}}><h2 style={{fontFamily:F.heading,fontSize:22,marginBottom:8}}>How Pricing Works</h2><p style={{color:"rgba(255,255,255,.6)",marginBottom:20}}>Request → Chef proposes custom menu + price → Maintenance admin approves → You pay</p><div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>{[["🍽️","Custom Menu","Chef tailors menu for your event"],["💡","Transparent Price","Exact price before you pay"],["🔒","Secure Payment","PayHere after admin approval"]].map(([ic,t,d])=><div key={t} style={{background:"rgba(255,255,255,.08)",borderRadius:11,padding:18}}><div style={{fontSize:28,marginBottom:7}}>{ic}</div><div style={{fontWeight:600,marginBottom:5}}>{t}</div><div style={{fontSize:12,color:"rgba(255,255,255,.5)"}}>{d}</div></div>)}</div></div></div>);}
+function PricingPage(){return(<div style={{maxWidth:1100,margin:"0 auto",padding:"44px 16px"}}><style>{`.pricing-grid{display:grid;grid-template-columns:1fr 1fr;gap:20;margin-bottom:36px}.pricing-how{display:grid;grid-template-columns:repeat(3,1fr);gap:14}@media(max-width:640px){.pricing-grid{grid-template-columns:1fr!important}.pricing-how{grid-template-columns:1fr!important}}`}</style><div style={{textAlign:"center",marginBottom:32}}><h1 style={{fontFamily:F.heading,fontSize:28,fontWeight:700,marginBottom:10}}>Transparent Pricing</h1><p style={{color:C.muted,fontSize:14,maxWidth:480,margin:"0 auto"}}>Starting prices shown. Exact price confirmed by chef's personalised proposal after booking.</p></div><div className="pricing-grid">{[{type:"Standard Chef",desc:"Budget-friendly home dining",color:C.success,tiers:[["2–4 guests","Starting from LKR 6,000"],["5–8 guests","Starting from LKR 12,000"],["9+ guests","Starting from LKR 18,000"]]},{type:"Premium Chef",desc:"Luxury private dining",color:"#B45309",tiers:[["2–4 guests","Starting from LKR 25,000"],["5–8 guests","Starting from LKR 40,000"],["9+ guests","Starting from LKR 70,000"]]}].map(p=><div key={p.type} style={{background:"white",borderRadius:18,border:`2px solid ${p.color}22`,padding:26}}><h3 style={{fontFamily:F.heading,fontSize:22,marginBottom:6}}>{p.type}</h3><p style={{color:C.muted,fontSize:13,marginBottom:14}}>{p.desc}</p>{p.tiers.map(([t,pr])=><div key={t} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:`1px solid ${C.border}`}}><span style={{fontSize:13,color:C.muted}}>{t}</span><span style={{fontSize:13,fontWeight:700,color:p.color}}>{pr}</span></div>)}</div>)}</div><div style={{background:`linear-gradient(135deg,${C.dark},#2D1810)`,borderRadius:18,padding:"30px 20px",textAlign:"center",color:"white",marginTop:20}}><h2 style={{fontFamily:F.heading,fontSize:22,marginBottom:8}}>How Pricing Works</h2><p style={{color:"rgba(255,255,255,.6)",marginBottom:20,fontSize:14}}>Request → Chef proposes custom menu + price → Maintenance admin approves → You pay</p><div className="pricing-how">{[["🍽️","Custom Menu","Chef tailors menu for your event"],["💡","Transparent Price","Exact price before you pay"],["🔒","Secure Payment","PayHere after admin approval"]].map(([ic,t,d])=><div key={t} style={{background:"rgba(255,255,255,.08)",borderRadius:11,padding:18}}><div style={{fontSize:28,marginBottom:7}}>{ic}</div><div style={{fontWeight:600,marginBottom:5}}>{t}</div><div style={{fontSize:12,color:"rgba(255,255,255,.5)"}}>{d}</div></div>)}</div></div></div>);}
 function AIMenuPage(){return(<div style={{maxWidth:1100,margin:"0 auto",padding:"60px 24px"}}><div style={{textAlign:"center",marginBottom:36}}><div style={{display:"inline-flex",alignItems:"center",gap:7,background:"linear-gradient(135deg,#1e293b,#0f172a)",border:"1px solid rgba(232,116,59,.4)",borderRadius:20,padding:"6px 15px",marginBottom:16}}><span style={{color:C.primary,fontSize:12,fontWeight:600,letterSpacing:1}}>✨ AI-POWERED</span></div><h1 style={{fontFamily:F.heading,fontSize:36,fontWeight:700,marginBottom:9}}>AI Menu Planner</h1><p style={{color:C.muted,fontSize:14,maxWidth:480,margin:"0 auto"}}>Select your occasion and get personalised menu recommendations with estimated price ranges</p></div><AIMenuAssistant/></div>);}
 
 // ─── App Root ─────────────────────────────────────────────────────────────────
