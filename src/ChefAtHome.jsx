@@ -237,10 +237,13 @@ const sbSaveApp = async (app) => {
 };
 const sbUpdateAppStatus = async (id, status) => {
   try {
+    const apps = loadApps();
+    const idx = apps.findIndex(a => a.id === id);
+    const existingData = idx >= 0 ? {...apps[idx], status} : {status};
     await fetch(`${SB_URL}/rest/v1/chef_applications?id=eq.${id}`, {
       method: "PATCH",
       headers: { "Content-Type":"application/json", apikey:SB_KEY, Authorization:`Bearer ${SB_KEY}`, "Prefer":"return=representation" },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, data: existingData }),
     });
   } catch(e) {
     console.warn("Supabase chef app status update failed", e);
