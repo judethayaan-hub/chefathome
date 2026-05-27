@@ -1183,7 +1183,12 @@ function CustomerDashboard({user,setPage,loginKey}) {
   const pendingReview=past.filter(b=>!b.reviewed&&b.status==="confirmed");
   const reviews=loadReviews().filter(r=>r.customerEmail===user?.email);
   const [myApp,setMyApp]=useState(()=>loadApps().find(a=>a.email===user?.email)||null);
-  useEffect(()=>{sbLoadApps().then(apps=>setMyApp(apps.find(a=>a.email===user?.email)||null));},[user?.email]);
+  useEffect(()=>{
+    const loadMyApp=()=>sbLoadApps().then(apps=>setMyApp(apps.find(a=>a.email===user?.email)||null));
+    loadMyApp();
+    const interval=setInterval(loadMyApp,5000);
+    return()=>clearInterval(interval);
+  },[user?.email]);
 
   if(showChefApp) return <div style={{maxWidth:680,margin:"0 auto",padding:"36px 22px"}}><ChefJoinRequestForm user={user} onSubmit={(app)=>{setMyApp(app);setShowChefApp(false);setTab("become-chef");}} onCancel={()=>setShowChefApp(false)}/></div>;
 
@@ -1316,7 +1321,8 @@ function CustomerDashboard({user,setPage,loginKey}) {
             {myApp?(
               <div style={{background:myApp.status==="approved"?C.successBg:myApp.status==="rejected"?C.dangerBg:C.warnBg,border:`1px solid ${myApp.status==="approved"?C.success:myApp.status==="rejected"?C.danger:C.warn}44`,borderRadius:14,padding:28,textAlign:"center"}}>
                 <div style={{fontSize:48,marginBottom:11}}>{myApp.status==="approved"?"🎉":myApp.status==="rejected"?"❌":"⏳"}</div>
-                <h3 style={{fontFamily:F.heading,fontSize:19,marginBottom:7}}>{myApp.status==="approved"?"Approved! You have Chef Panel access.":myApp.status==="rejected"?"Application Rejected.":"Application Under Review (2–3 business days)"}</h3>
+                <h3 style={{fontFamily:F.heading,fontSize:19,marginBottom:7}}>{myApp.status==="approved"?"Approved! You have Chef Panel access.":myApp.status==="rejected"?"Application Rejected":"Application Under Review (2–3 business days)"}</h3>
+                {myApp.status==="rejected"&&<div style={{marginTop:10}}><p style={{color:C.danger,fontSize:13,marginBottom:14}}>Your application was not approved. You may resubmit with updated documents.</p><button className="btn-primary" style={{padding:"10px 24px"}} onClick={()=>{setMyApp(null);setShowChefApp(true);}}>Resubmit Application →</button></div>}
               </div>
             ):(
               <div>
