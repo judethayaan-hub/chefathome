@@ -635,23 +635,23 @@ const css = `
   .mob-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 4px;cursor:pointer;touch-action:manipulation;border:none;background:transparent;color:rgba(255,255,255,.5);font-size:9px;font-weight:600;font-family:${F.body}}
   .mob-nav-item.active{color:${C.primary}}
   .mob-nav-item span:first-child{font-size:18px}
-  .mob-scroll-tabs{display:flex;overflow-x:auto;gap:6px;padding:10px 16px;background:${C.darkNav};-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .mob-scroll-tabs{display:flex;overflow-x:auto;gap:6px;padding:10px 12px;background:${C.darkNav};-webkit-overflow-scrolling:touch;scrollbar-width:none}
   .mob-scroll-tabs::-webkit-scrollbar{display:none}
-  .mob-scroll-tab{flex-shrink:0;padding:8px 14px;border-radius:20px;color:rgba(255,255,255,.6);font-size:12px;font-weight:600;cursor:pointer;touch-action:manipulation;border:none;background:rgba(255,255,255,.08);white-space:nowrap;font-family:${F.body}}
+  .mob-scroll-tab{flex-shrink:0;padding:7px 12px;border-radius:20px;color:rgba(255,255,255,.6);font-size:11px;font-weight:600;cursor:pointer;touch-action:manipulation;border:none;background:rgba(255,255,255,.08);white-space:nowrap;font-family:${F.body}}
   .mob-scroll-tab.active{background:${C.primary};color:white}
   .panel-layout{display:flex;min-height:calc(100vh - 64px)}
   .panel-sidebar{width:220px;background:${C.darkNav};padding:22px 11px;flex-shrink:0}
-  @media(max-width:768px){.panel-sidebar{display:none}.panel-layout{flex-direction:column;min-height:calc(100vh - 64px - 56px)}}
-  .panel-content{flex:1;padding:28px;overflow-x:hidden;min-width:0}
-  @media(max-width:768px){.panel-content{padding:16px}}
+  @media(max-width:768px){.panel-sidebar{display:none}.panel-layout{flex-direction:column;min-height:calc(100vh - 64px)}}
+  .panel-content{flex:1;padding:28px;overflow-x:hidden;min-width:0;max-width:100vw}
+  @media(max-width:768px){.panel-content{padding:12px}}
   .r2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   @media(max-width:500px){.r2{grid-template-columns:1fr}}
   .r3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:13px}
   @media(max-width:700px){.r3{grid-template-columns:1fr 1fr}}
   @media(max-width:400px){.r3{grid-template-columns:1fr}}
-  .r4{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+  .r4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
   @media(max-width:900px){.r4{grid-template-columns:1fr 1fr}}
-  @media(max-width:480px){.r4{grid-template-columns:1fr}}
+  @media(max-width:480px){.r4{grid-template-columns:1fr 1fr;gap:10px}}
   .r5{display:grid;grid-template-columns:repeat(5,1fr);gap:16px}
   @media(max-width:900px){.r5{grid-template-columns:1fr 1fr}}
   @media(max-width:480px){.r5{grid-template-columns:1fr}}
@@ -659,6 +659,12 @@ const css = `
   @media(max-width:768px){.hero-grid{grid-template-columns:1fr;gap:32px}}
   .chef-row-btns{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   @media(max-width:600px){.chef-row-btns{gap:5px}}
+  .stats4{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:24px}
+  @media(max-width:768px){.stats4{grid-template-columns:1fr 1fr;gap:10px}
+    .stats4>div{padding:12px 10px!important}
+    .panel-content h2{font-size:18px!important}
+    .panel-content p{font-size:12px!important}
+  }
 `;
 
 // ─── Utility Components ───────────────────────────────────────────────────────
@@ -907,12 +913,12 @@ function Navbar({page,setPage,user,onLogout,setShowAuth}) {
         <div className="hide-mobile" style={{display:"flex",alignItems:"center",gap:22}}>
           {navPages.map(([p,l])=><span key={p} className="nav-link" onClick={()=>setPage(p)} style={{color:page===p?C.primary:undefined}}>{l}</span>)}
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
           {user?(
             <>
-              <button className="btn-primary" style={{fontSize:12,padding:"7px 11px",whiteSpace:"nowrap"}} onClick={()=>setPage(dashPage)}>{dashLabel}</button>
-              <Avatar initials={user.name?.split(" ").map(n=>n[0]).join("").slice(0,2)||"U"} size={30}/>
-              <button onClick={onLogout} style={{background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.7)",padding:"6px 10px",borderRadius:6,fontSize:12,border:"none",whiteSpace:"nowrap"}}>Logout</button>
+              <button className="btn-primary" style={{fontSize:11,padding:"6px 9px",whiteSpace:"nowrap",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis"}} onClick={()=>setPage(dashPage)}>{dashLabel}</button>
+              <Avatar initials={user.name?.split(" ").map(n=>n[0]).join("").slice(0,2)||"U"} size={28}/>
+              <button onClick={onLogout} style={{background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.7)",padding:"6px 8px",borderRadius:6,fontSize:11,border:"none",whiteSpace:"nowrap"}}>Logout</button>
             </>
           ):(
             <button className="btn-ghost" style={{padding:"7px 14px",fontSize:13}} onClick={()=>setShowAuth("login")}>Log In</button>
@@ -2695,7 +2701,7 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
               <button onClick={refresh} style={{background:"white",border:`1px solid ${C.border}`,borderRadius:8,padding:"7px 13px",fontSize:12,cursor:"pointer"}}>🔄 Refresh</button>
             </div>
             {pendingApps.length>0&&<div onClick={()=>setTab("chef-apps")} style={{background:C.warnBg,border:`1px solid ${C.warn}44`,borderRadius:11,padding:"11px 16px",marginBottom:15,cursor:"pointer",display:"flex",gap:9,alignItems:"center"}}><span>⚠️</span><span style={{fontWeight:700,color:C.warn}}>{pendingApps.length} chef application{pendingApps.length>1?"s":""} pending</span><span style={{marginLeft:"auto",color:C.warn}}>Review →</span></div>}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:13,marginBottom:24}}>
+            <div className="stats4">
               <MetricCard label="Total Bookings" value={allBookings.length} color={C.primary}/>
               <MetricCard label="Total Revenue" value={fmtLKR(totalRevenue)} color={C.success}/>
               <MetricCard label="Proposals" value={allProposals.length} color={C.purple}/>
