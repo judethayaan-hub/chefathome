@@ -2537,11 +2537,10 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
       };
       addDynamicChef(chefProfile);
     }
-    setPendingApps(p=>p.filter(a=>a.id!==id));
     setViewApp(null);
-    refresh();
+    sbLoadApps().then(apps=>{setAllApps(apps);setPendingApps(apps.filter(a=>a.status==="pending"));});
   };
-  const rejectApp=async(id)=>{await sbUpdateAppStatus(id,"rejected");setPendingApps(p=>p.filter(a=>a.id!==id));setViewApp(null);};
+  const rejectApp=async(id)=>{await sbUpdateAppStatus(id,"rejected");setViewApp(null);sbLoadApps().then(apps=>{setAllApps(apps);setPendingApps(apps.filter(a=>a.status==="pending"));});};
   const setChefStarting=(chefId,data)=>{const fees=loadChefFees();fees[chefId]={...fees[chefId],...data};saveChefFees(fees);setChefFeeMap({...fees});setEditFee(null);};
   const approveSug=(sug)=>{const chef=getAllChefs().find(c=>c.alias===sug.chefAlias);if(chef){const fees=loadChefFees();fees[chef.id]={...fees[chef.id],startingFrom:sug.suggestAllIn,cookStartingFrom:sug.suggestCook};saveChefFees(fees);}const all=loadFeeSugs().map(s=>s.id===sug.id?{...s,status:"approved"}:s);saveFeeSugs(all);setFeeSugs(p=>p.filter(s=>s.id!==sug.id));};
 
