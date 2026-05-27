@@ -1458,7 +1458,7 @@ function ChefPanel({user,loginKey}) {
           <div style={{color:"rgba(255,255,255,.5)",fontSize:11}}>{user?.email}</div>
           <span className="badge-premium" style={{marginTop:6,display:"inline-block"}}>Verified Chef</span>
         </div>
-        {[["overview","📊","Overview"],["pending","✏️","Create Proposals",pendingProposalBookings.length],["my-proposals","📋","My Proposals"],["bookings","📅","Confirmed Bookings"],["availability","🗓","Availability"],["earnings","💰","Earnings"],["suggest-fee","💡","Suggest Fees"],["profile","👤","Profile"]].map(([id,ic,l,cnt])=>(
+        {[["overview","📊","Overview"],["pending","✏️","Create Proposals",pendingProposalBookings.length],["my-proposals","📋","My Proposals"],["bookings","📅","Confirmed Bookings"],["availability","🗓","Availability"],["earnings","💰","Earnings"],["suggest-fee","📢","Listing Request"],["profile","👤","Profile"]].map(([id,ic,l,cnt])=>(
           <div key={id} className={`sidebar-link ${tab===id?"active":""}`} onClick={()=>setTab(id)} style={{position:"relative"}}><span>{ic}</span><span>{l}</span>{cnt>0&&<span style={{marginLeft:"auto",background:C.danger,color:"white",borderRadius:10,fontSize:10,fontWeight:700,padding:"2px 6px"}}>{cnt}</span>}</div>
         ))}
       </div>
@@ -1594,7 +1594,56 @@ function ChefMyProposals({user}){
 }
 function ChefAvailabilityTab(){const [avail,setAvail]=useState({Mon:true,Tue:true,Wed:false,Thu:true,Fri:true,Sat:true,Sun:false});return(<div><h2 style={{fontFamily:F.heading,fontSize:21,marginBottom:16}}>Availability</h2><div style={{background:"white",borderRadius:13,border:`1px solid ${C.border}`,padding:22}}><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:9}}>{Object.entries(avail).map(([day,on])=><div key={day} onClick={()=>setAvail(a=>({...a,[day]:!a[day]}))} style={{textAlign:"center",padding:"12px 5px",borderRadius:11,border:`2px solid ${on?C.primary:C.border}`,background:on?C.primaryLight:"white",cursor:"pointer",transition:"all .2s"}}><div style={{fontSize:11,fontWeight:700,color:on?C.primary:C.muted,textTransform:"uppercase"}}>{day}</div><div style={{fontSize:17,marginTop:5}}>{on?"✅":"❌"}</div></div>)}</div><button className="btn-primary" style={{marginTop:16,padding:"9px 22px"}} onClick={()=>alert("✅ Saved!")}>Save</button></div></div>);}
 function ChefEarningsTab({user,bookings,settings}){const confirmed=bookings.filter(b=>b.status==="confirmed"||b.status==="completed");const total=confirmed.reduce((s,b)=>s+(b.amount||0),0);const myEarn=confirmed.reduce((s,b)=>s+Math.round((b.amount||0)*(1-settings.commissionRate/100-settings.safetyHoldRate/100)),0);return(<div><h2 style={{fontFamily:F.heading,fontSize:21,marginBottom:18}}>Earnings</h2><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:13,marginBottom:20}}><MetricCard label="My Earnings" value={fmtLKR(myEarn)} color={C.success}/><MetricCard label="Platform Fees" value={fmtLKR(confirmed.reduce((s,b)=>s+(b.commissionAmt||0),0))} color={C.info}/><MetricCard label="Safety Holds" value={fmtLKR(confirmed.reduce((s,b)=>s+(b.holdAmt||0),0))} color={C.warn}/></div>{confirmed.length===0?<EmptyState icon="💰" text="No earnings yet."/>:confirmed.map(b=>{const earn=Math.round((b.amount||0)*(1-settings.commissionRate/100-settings.safetyHoldRate/100));return(<div key={b.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:16,marginBottom:9,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:600}}>{b.customerName}</div><div style={{fontSize:11,color:C.muted}}>{b.date}</div></div><div style={{textAlign:"right"}}><div style={{fontWeight:700,color:C.success}}>{fmtLKR(earn)}</div><div style={{fontSize:11,color:C.muted}}>Total: {fmtLKR(b.amount||0)}</div></div></div>);})}</div>);}
-function ChefFeeSuggestTab({user}){const [form,setForm]=useState({allIn:"",cook:"",note:""});const [sent,setSent]=useState(false);const submit=()=>{if(!form.allIn||!form.cook)return;const all=loadFeeSugs();all.push({id:genId(),chefEmail:user?.email,chefAlias:user?.name||"Chef",suggestAllIn:Number(form.allIn),suggestCook:Number(form.cook),note:form.note,submittedAt:new Date().toISOString(),status:"pending"});saveFeeSugs(all);setSent(true);};if(sent)return(<div style={{textAlign:"center",padding:40,background:"white",borderRadius:11,border:`1px solid ${C.border}`}}><div style={{fontSize:40,marginBottom:10}}>✅</div><h3 style={{fontFamily:F.heading,fontSize:18,marginBottom:6}}>Suggestion Sent!</h3><p style={{color:C.muted}}>Super admin will review and update your rates.</p></div>);return(<div><h2 style={{fontFamily:F.heading,fontSize:21,marginBottom:6}}>Suggest Fees</h2><p style={{color:C.muted,fontSize:13,marginBottom:18}}>Only super admin sets final rates. This is your suggestion only.</p><div style={{background:"white",borderRadius:13,border:`1px solid ${C.border}`,padding:22,display:"grid",gap:13}}><div><RL>All Inclusive Starting Rate (LKR)</RL><input className="input" type="number" placeholder="e.g. 30000" value={form.allIn} onChange={e=>setForm(f=>({...f,allIn:e.target.value}))}/></div><div><RL>Cook-at-Home Starting Rate (LKR)</RL><input className="input" type="number" placeholder="e.g. 10000" value={form.cook} onChange={e=>setForm(f=>({...f,cook:e.target.value}))}/></div><div><RL req={false}>Note to Admin</RL><textarea className="input" rows={2} value={form.note} onChange={e=>setForm(f=>({...f,note:e.target.value}))} style={{resize:"none"}} placeholder="Why you're suggesting these rates..."/></div><button className="btn-primary" style={{padding:"10px 22px"}} onClick={submit} disabled={!form.allIn||!form.cook}>Submit Suggestion →</button></div></div>);}
+function ChefFeeSuggestTab({user}){
+  const [form,setForm]=useState({allIn:"",cook:"",note:""});
+  const [sent,setSent]=useState(false);
+  const [existing,setExisting]=useState(null);
+  useEffect(()=>{
+    // Load from Supabase proposals where booking_id = listing_request and chef email matches
+    sb.from("proposals").select("*").then(rows=>{
+      const mine=rows.find(r=>r.booking_id==="listing_request"&&r.data?.chefEmail===user?.email&&r.data?.status==="pending");
+      if(mine) setExisting(mine.data);
+    }).catch(()=>{
+      const local=loadFeeSugs().find(s=>s.chefEmail===user?.email&&s.status==="pending");
+      if(local) setExisting(local);
+    });
+  },[user?.email]);
+  const submit=async()=>{
+    if(!form.allIn||!form.cook) return;
+    const req={id:genId(),chefEmail:user?.email,chefAlias:user?.name||"Chef",suggestAllIn:Number(form.allIn),suggestCook:Number(form.cook),note:form.note,submittedAt:new Date().toISOString(),status:"pending",type:"listing_request"};
+    const all=loadFeeSugs();
+    all.push(req);
+    saveFeeSugs(all);
+    // Save to Supabase proposals table
+    try{ await sb.from("proposals").upsert({id:req.id, booking_id:"listing_request", data:req}); }catch(e){ console.warn("listing request save failed",e); }
+    setExisting(req);
+    setSent(true);
+  };
+  if(existing||sent) return(
+    <div style={{maxWidth:520}}>
+      <h2 style={{fontFamily:F.heading,fontSize:21,marginBottom:6}}>📢 Listing Request</h2>
+      <div style={{background:C.successBg,border:`1px solid ${C.success}44`,borderRadius:13,padding:28,textAlign:"center"}}>
+        <div style={{fontSize:44,marginBottom:10}}>📬</div>
+        <h3 style={{fontFamily:F.heading,fontSize:18,marginBottom:6,color:C.success}}>Request Submitted!</h3>
+        <p style={{color:C.muted,fontSize:13,lineHeight:1.7}}>Your listing request has been sent to the super admin. Once approved and your starting price is set, your profile will appear on the public Chefs page.</p>
+        {existing?.note&&<div style={{background:"white",borderRadius:9,padding:"10px 14px",marginTop:14,fontSize:13,color:C.muted}}>📝 Your note: {existing.note}</div>}
+      </div>
+    </div>
+  );
+  return(
+    <div style={{maxWidth:520}}>
+      <h2 style={{fontFamily:F.heading,fontSize:21,marginBottom:6}}>📢 Request Listing on Chefs Page</h2>
+      <p style={{color:C.muted,fontSize:13,marginBottom:18}}>Once the super admin approves your request and sets your starting price, your profile will go live on the public Chefs page.</p>
+      <div style={{background:"white",borderRadius:13,border:`1px solid ${C.border}`,padding:22,display:"grid",gap:13}}>
+        <div style={{background:C.infoBg,borderRadius:9,padding:"10px 14px",fontSize:12,color:C.info}}>💡 Suggest your starting rates — admin sets the final approved price.</div>
+        <div><RL>Suggested All Inclusive Starting Rate (LKR)</RL><input className="input" type="number" placeholder="e.g. 30000" value={form.allIn} onChange={e=>setForm(f=>({...f,allIn:e.target.value}))}/></div>
+        <div><RL>Suggested Cook-at-Home Starting Rate (LKR)</RL><input className="input" type="number" placeholder="e.g. 10000" value={form.cook} onChange={e=>setForm(f=>({...f,cook:e.target.value}))}/></div>
+        <div><RL req={false}>Message to Admin</RL><textarea className="input" rows={3} value={form.note} onChange={e=>setForm(f=>({...f,note:e.target.value}))} style={{resize:"none"}} placeholder="Tell admin about your experience, availability, or anything else..."/></div>
+        <button className="btn-primary" style={{padding:"11px 22px"}} onClick={submit} disabled={!form.allIn||!form.cook}>📢 Send Listing Request →</button>
+      </div>
+    </div>
+  );
+}
 function ChefProfileTab({user}){return(<div><h2 style={{fontFamily:F.heading,fontSize:21,marginBottom:18}}>My Profile</h2><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>{[["Personal Info",[["Full Name",user?.name||""],["Email",user?.email||""],["Phone",""]]],["Professional",[["Specialties",""],["Location",""],["Bio",""]]]].map(([title,fields])=><div key={title} style={{background:"white",borderRadius:13,border:`1px solid ${C.border}`,padding:22}}><h3 style={{fontFamily:F.heading,fontSize:15,marginBottom:14}}>{title}</h3><div style={{display:"grid",gap:12}}>{fields.map(([l,v])=><div key={l}><label className="label">{l}</label><input className="input" defaultValue={v} readOnly={l==="Email"} style={l==="Email"?{background:"#f9f9f9"}:{}}/></div>)}</div><button className="btn-primary" style={{marginTop:13,padding:"8px 20px"}} onClick={()=>alert("✅ Saved!")}>Save</button></div>)}</div></div>);}
 
 // ─── Chef Join Form ───────────────────────────────────────────────────────────
@@ -2425,7 +2474,14 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
   const [settings,setSettings]=useState(loadSettings);
   const [pendingApps,setPendingApps]=useState([]);
   const [allApps,setAllApps]=useState([]);
-  const [feeSugs,setFeeSugs]=useState(()=>loadFeeSugs().filter(s=>s.status==="pending"));
+  const [feeSugs,setFeeSugs]=useState([]);
+  useEffect(()=>{
+    sb.from("proposals").select("*").then(rows=>{
+      const sugs=rows.filter(r=>r.booking_id==="listing_request"&&r.data?.status==="pending").map(r=>r.data);
+      setFeeSugs(sugs);
+      saveFeeSugs(sugs);
+    }).catch(()=>setFeeSugs(loadFeeSugs().filter(s=>s.status==="pending")));
+  },[]);
   const [allBookings,setAllBookings]=useState(loadBookings);
   useEffect(()=>{sbLoadApps().then(apps=>{setAllApps(apps);setPendingApps(apps.filter(a=>a.status==="pending"));});},[]);
   const [allProposals,setAllProposals]=useState(loadProposals);
@@ -2453,7 +2509,10 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
     sbLoadBookings().then(setAllBookings);
     sbLoadProposals().then(setAllProposals);
     sbLoadApps().then(apps=>{setAllApps(apps);setPendingApps(apps.filter(a=>a.status==="pending"));});
-    setFeeSugs(loadFeeSugs().filter(s=>s.status==="pending"));
+    sb.from("proposals").select("*").then(rows=>{
+      const sugs=rows.filter(r=>r.booking_id==="listing_request"&&r.data?.status==="pending").map(r=>r.data);
+      setFeeSugs(sugs);saveFeeSugs(sugs);
+    }).catch(()=>setFeeSugs(loadFeeSugs().filter(s=>s.status==="pending")));
     setChefFeeMap(loadChefFees());
     setAllUsers(loadAllUsers());
     const r={};loadUsers().forEach(u=>{if(u.role)r[u.email]=u.role;});
@@ -2469,7 +2528,10 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
       sbLoadProposals().then(setAllProposals);
       const apps=loadApps();
       setPendingApps(apps.filter(a=>a.status==="pending"));
-      setFeeSugs(loadFeeSugs().filter(s=>s.status==="pending"));
+      sb.from("proposals").select("*").then(rows=>{
+        const sugs=rows.filter(r=>r.booking_id==="listing_request"&&r.data?.status==="pending").map(r=>r.data);
+        setFeeSugs(sugs);saveFeeSugs(sugs);
+      }).catch(()=>setFeeSugs(loadFeeSugs().filter(s=>s.status==="pending")));
       setChefFeeMap(loadChefFees());
       const stored=loadUsers();
       setAllUsers([...stored]);
@@ -2580,7 +2642,16 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
   };
   const rejectApp=async(id)=>{await sbUpdateAppStatus(id,"rejected");setViewApp(null);sbLoadApps().then(apps=>{setAllApps(apps);setPendingApps(apps.filter(a=>a.status==="pending"));});};
   const setChefStarting=(chefId,data)=>{const fees=loadChefFees();fees[chefId]={...fees[chefId],...data};saveChefFees(fees);setChefFeeMap({...fees});setEditFee(null);};
-  const approveSug=(sug)=>{const chef=getAllChefs().find(c=>c.alias===sug.chefAlias);if(chef){const fees=loadChefFees();fees[chef.id]={...fees[chef.id],startingFrom:sug.suggestAllIn,cookStartingFrom:sug.suggestCook};saveChefFees(fees);}const all=loadFeeSugs().map(s=>s.id===sug.id?{...s,status:"approved"}:s);saveFeeSugs(all);setFeeSugs(p=>p.filter(s=>s.id!==sug.id));};
+  const approveSug=(sug)=>{
+    const chef=getAllChefs().find(c=>c.alias===sug.chefAlias||c.email===sug.chefEmail);
+    if(chef){const fees=loadChefFees();fees[chef.id]={...fees[chef.id],startingFrom:sug.suggestAllIn,cookStartingFrom:sug.suggestCook};saveChefFees(fees);}
+    const approvedSug={...sug,status:"approved"};
+    const all=loadFeeSugs().map(s=>s.id===sug.id?approvedSug:s);
+    saveFeeSugs(all);
+    // Update in Supabase
+    sb.from("proposals").upsert({id:sug.id,booking_id:"listing_request",data:approvedSug}).catch(()=>{});
+    setFeeSugs(p=>p.filter(s=>s.id!==sug.id));
+  };
 
   const totalRevenue=allBookings.reduce((s,b)=>s+(b.amount||0),0);
   const allCustomers=[...new Set(allBookings.map(b=>b.customerEmail))];
@@ -2714,7 +2785,7 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
           <div style={{fontFamily:F.heading,fontSize:15,color:"white",fontWeight:700}}>🍽️ ChefAtHome</div>
           <div style={{color:isSupportAdminUser?C.info:C.primary,fontSize:11,marginTop:2}}>{isSupportAdminUser?"🛡️ Support Admin Panel":"⚡ Super Admin Panel"}</div>
         </div>
-        {[["dashboard","📊","Dashboard"],["chef-apps","📋","Chef Applications",pendingApps.length],["maint-admins","🔧","Maintenance Admins"],!isSupportAdminUser&&["support-admins","🛡️","Support Admins"],["chefs","👨‍🍳","Chef Management"],["users","👥","All Users"],["bookings","📅","All Bookings"],["payments","💳","Payments"],["fee-sugs","💡","Fee Suggestions",feeSugs.length],["proposals","📝","All Proposals"],["activity","🕐","Login History"],["settings","⚙️","Settings"]].filter(Boolean).map(([id,ic,l,cnt])=>(
+        {[["dashboard","📊","Dashboard"],["chef-apps","📋","Chef Applications",pendingApps.length],["maint-admins","🔧","Maintenance Admins"],!isSupportAdminUser&&["support-admins","🛡️","Support Admins"],["chefs","👨‍🍳","Chef Management"],["users","👥","All Users"],["bookings","📅","All Bookings"],["payments","💳","Payments"],["fee-sugs","📢","Listing Requests",feeSugs.length],["proposals","📝","All Proposals"],["activity","🕐","Login History"],["settings","⚙️","Settings"]].filter(Boolean).map(([id,ic,l,cnt])=>(
           <div key={id} className={`sidebar-link ${tab===id?"active":""}`} onClick={()=>{setTab(id);refresh();}} style={{position:"relative"}}>
             <span>{ic}</span><span style={{fontSize:13}}>{l}</span>
             {cnt>0&&<span style={{marginLeft:"auto",background:C.danger,color:"white",borderRadius:10,fontSize:10,fontWeight:700,padding:"2px 6px"}}>{cnt}</span>}
@@ -2825,7 +2896,26 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
                         <div style={{fontSize:10,color:C.muted}}>📝 Proposals</div><div style={{fontWeight:700,color:C.info,fontSize:14}}>{chefProposals.length}</div>
                       </button>
                       <button onClick={()=>{setEditFee(c);setFeeForm({startingFrom:fee?.startingFrom||c.startingFrom||0,extraPerGuest:fee?.extraPerGuest||2000});}} style={{background:C.infoBg,color:C.info,padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✏️ Price</button>
-                      <button onClick={()=>setSuspendTarget({id:c.id,alias:c.alias,displayId})} style={{background:"#FFF7ED",color:"#C2410C",padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"1px solid #FDBA74",cursor:"pointer"}}>🚫</button>
+                      <button onClick={()=>setSuspendTarget({id:c.id,alias:c.alias,email:c.email,displayId})} style={{background:"#FFF7ED",color:"#C2410C",padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:"1px solid #FDBA74",cursor:"pointer"}}>🚫 Suspend</button>
+                      <button onClick={()=>{if(window.confirm(`Permanently remove ${c.alias} from the platform? This will demote them to customer.`)){
+                        // Remove from dynamic chefs list
+                        const dyn=loadDynamicChefs().filter(d=>d.id!==c.id);saveDynamicChefs(dyn);
+                        // Add to removed list so static chefs are hidden too
+                        const removed=ls.get("cah_removed_chefs",[]);if(!removed.includes(c.id)){removed.push(c.id);ls.set("cah_removed_chefs",removed);}
+                        // Demote role to customer in Supabase
+                        if(c.email){
+                          const users=loadUsers();const idx=users.findIndex(u=>u.email===c.email);
+                          if(idx>=0){users[idx].role="customer";saveUsers(users);}
+                          else users.push({email:c.email,role:"customer"});
+                          saveUsers(users);
+                          sb.from("users").upsert({email:c.email,data:{...(loadUsers().find(u=>u.email===c.email)||{}),email:c.email,role:"customer"}}).catch(()=>{});
+                          // Also update chef_applications status to removed
+                          fetch(`${SB_URL}/rest/v1/chef_applications?email=eq.${encodeURIComponent(c.email)}`,{method:"PATCH",headers:{"Content-Type":"application/json",apikey:SB_KEY,Authorization:`Bearer ${SB_KEY}`,"Prefer":"return=representation"},body:JSON.stringify({status:"removed"})}).catch(()=>{});
+                        }
+                        addChefHistoryEvent({chefId:c.id,chefAlias:c.alias,action:"removed",reason:"Removed by super admin"});
+                        window.dispatchEvent(new StorageEvent("storage",{key:"cah_dynamic_chefs"}));
+                        refresh();
+                      }}} style={{background:C.dangerBg,color:C.danger,padding:"6px 13px",borderRadius:6,fontSize:12,fontWeight:600,border:`1px solid ${C.danger}44`,cursor:"pointer"}}>🗑 Remove</button>
                     </div>
                   </div>
                   {/* Expanded detail view */}
@@ -2945,19 +3035,7 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:9}}>
                     <span style={{padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:700,background:rc.bg,color:rc.c}}>{rc.l}</span>
-                    {currentRole!=="super_admin"&&(
-                      <select value={currentRole} onChange={e=>setUserRole(u.email,e.target.value)} style={{fontSize:12,padding:"5px 9px",borderRadius:6,border:`1px solid ${C.border}`,cursor:"pointer"}}>
-                        <option value="customer">Customer</option>
-                        <option value="chef">Chef</option>
-
-                      </select>
-                    )}
-                    {currentRole==="maintenance_admin"&&(
-                      <button onClick={()=>{if(window.confirm(`Remove Maintenance Admin role from ${u.name||u.email}?`))removeUserRole(u.email);}} style={{background:C.dangerBg,color:C.danger,padding:"5px 11px",borderRadius:6,fontSize:12,fontWeight:700,border:"none",cursor:"pointer"}}>🗑 Remove</button>
-                    )}
-                    {currentRole==="chef"&&(
-                      <span style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>Manage in Chef Management</span>
-                    )}
+                    {currentRole==="chef"&&<span style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>Manage in Chef Management →</span>}
                   </div>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:9,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
@@ -3056,7 +3134,7 @@ function SuperAdminPanel({loginKey,user:panelUser}) {
 
         {tab==="bookings"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:18}}>All Bookings</h2>{allBookings.length===0?<EmptyState icon="📅" text="No bookings yet."/>:allBookings.slice().reverse().map(b=><div key={b.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:17,marginBottom:9}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:9}}><div><div style={{fontWeight:700,fontSize:14}}>{b.customerName||b.customerEmail}</div><div style={{fontSize:11,color:C.muted}}>#{b.id} · {b.chefAlias}</div></div><BookingStatusBadge status={b.status}/></div><div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:9,fontSize:12}}>{[["Date",b.date||"—"],["Time",b.time||"—"],["Guests",b.guests||"—"],["Phone",b.customerPhone||"—"],["Amount",b.amount?fmtLKR(b.amount):"TBD"]].map(([k,v])=><div key={k}><div style={{color:C.muted,fontSize:10}}>{k}</div><div style={{fontWeight:600}}>{v}</div></div>)}</div></div>)}</div>}
         {tab==="payments"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:16}}>Payments</h2><div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:13,marginBottom:20}}><MetricCard label="Total Revenue" value={fmtLKR(totalRevenue)} color={C.primary}/><MetricCard label="Platform Fees" value={fmtLKR(allBookings.reduce((s,b)=>s+(b.commissionAmt||0),0))} color={C.info}/><MetricCard label="Safety Holds" value={fmtLKR(allBookings.reduce((s,b)=>s+(b.holdAmt||0),0))} color={C.warn}/></div>{allBookings.filter(b=>b.amount).length===0?<EmptyState icon="💳" text="No payments yet."/>:allBookings.filter(b=>b.amount).slice().reverse().map(b=><div key={b.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:16,marginBottom:9,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:600}}>{b.customerName||b.customerEmail}</div><div style={{fontSize:11,color:C.muted}}>{b.date} · {b.chefAlias}</div></div><div style={{textAlign:"right"}}><div style={{fontWeight:700,color:C.primary}}>{fmtLKR(b.amount)}</div><div style={{fontSize:11,color:C.muted}}>Fee: {fmtLKR(b.commissionAmt||0)} · Hold: {fmtLKR(b.holdAmt||0)}</div></div></div>)}</div>}
-        {tab==="fee-sugs"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:6}}>Fee Suggestions</h2><p style={{color:C.muted,marginBottom:18,fontSize:13}}>Chef suggested starting price adjustments. You control the final rates.</p>{feeSugs.length===0?<EmptyState icon="💡" text="No pending suggestions."/>:feeSugs.map(sug=><div key={sug.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:18,marginBottom:11}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:9}}><div><div style={{fontWeight:700,fontSize:14}}>{sug.chefAlias}</div><div style={{fontSize:11,color:C.muted}}>{sug.chefEmail}</div></div><span style={{background:C.warnBg,color:C.warn,padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:700}}>Pending</span></div><div style={{display:"flex",gap:18,marginBottom:9}}><div><span style={{fontSize:12,color:C.muted}}>All Inclusive: </span><strong>{fmtLKR(sug.suggestAllIn)}</strong></div><div><span style={{fontSize:12,color:C.muted}}>Cook-at-Home: </span><strong>{fmtLKR(sug.suggestCook)}</strong></div></div>{sug.note&&<p style={{fontSize:13,color:C.muted,marginBottom:9}}>{sug.note}</p>}<div style={{display:"flex",gap:8}}><button onClick={()=>approveSug(sug)} style={{background:C.success,color:"white",padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✓ Approve</button><button onClick={()=>{const chef=getAllChefs().find(c=>c.alias===sug.chefAlias);if(chef){setEditFee(chef);setFeeForm({startingFrom:sug.suggestAllIn,extraPerGuest:settings.extraPerGuest});}}} style={{background:C.infoBg,color:C.info,padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✏️ Modify</button></div></div>)}</div>}
+        {tab==="fee-sugs"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:6}}>📢 Listing Requests</h2><p style={{color:C.muted,marginBottom:18,fontSize:13}}>Chefs requesting to be listed on the public Chefs page. Review and set their starting price to activate their listing.</p>{feeSugs.length===0?<EmptyState icon="💡" text="No pending suggestions."/>:feeSugs.map(sug=><div key={sug.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:18,marginBottom:11}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:9}}><div><div style={{fontWeight:700,fontSize:14}}>{sug.chefAlias}</div><div style={{fontSize:11,color:C.muted}}>{sug.chefEmail}</div></div><span style={{background:C.warnBg,color:C.warn,padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:700}}>Pending</span></div><div style={{display:"flex",gap:18,marginBottom:9}}><div><span style={{fontSize:12,color:C.muted}}>All Inclusive: </span><strong>{fmtLKR(sug.suggestAllIn)}</strong></div><div><span style={{fontSize:12,color:C.muted}}>Cook-at-Home: </span><strong>{fmtLKR(sug.suggestCook)}</strong></div></div>{sug.note&&<p style={{fontSize:13,color:C.muted,marginBottom:9}}>{sug.note}</p>}<div style={{display:"flex",gap:8}}><button onClick={()=>approveSug(sug)} style={{background:C.success,color:"white",padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✓ Approve</button><button onClick={()=>{const chef=getAllChefs().find(c=>c.alias===sug.chefAlias);if(chef){setEditFee(chef);setFeeForm({startingFrom:sug.suggestAllIn,extraPerGuest:settings.extraPerGuest});}}} style={{background:C.infoBg,color:C.info,padding:"7px 14px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",cursor:"pointer"}}>✏️ Modify</button></div></div>)}</div>}
         {tab==="proposals"&&<div><h2 style={{fontFamily:F.heading,fontSize:20,marginBottom:18}}>All Proposals</h2>{allProposals.length===0?<EmptyState icon="📝" text="No proposals yet."/>:allProposals.slice().reverse().map(p=>{const sc={pending_review:{bg:C.warnBg,c:C.warn,l:"Pending"},accepted:{bg:C.successBg,c:C.success,l:"Accepted"},rejected:{bg:C.dangerBg,c:C.danger,l:"Rejected"}}[p.status]||{bg:C.surface,c:C.muted,l:p.status};return(<div key={p.id} style={{background:"white",borderRadius:11,border:`1px solid ${C.border}`,padding:16,marginBottom:9,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:700,fontSize:14}}>{p.chefAlias} → {p.customerEmail}</div><div style={{fontSize:11,color:C.muted}}>{new Date(p.submittedAt).toLocaleDateString()} · {(p.menuItems||[]).length} dishes</div></div><div style={{textAlign:"right",display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end"}}><div style={{fontWeight:700,color:C.primary}}>{fmtLKR(p.finalPrice||p.proposedPrice)}</div><span style={{background:sc.bg,color:sc.c,padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:600}}>{sc.l}</span></div></div>);})}</div>}
         {tab==="settings"&&(
           <div>
