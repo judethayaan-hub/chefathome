@@ -1376,6 +1376,9 @@ function AuthScreen({ onAuth }) {
   const [form, setForm] = useState({ name:"", email:"", password:"" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const signInWithGoogle = () => {
+    window.location.href = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${window.location.origin}`;
+  };
   const handleSubmit = async () => {
     setError("");
     if (!form.email||!form.password) { setError("Email and password required."); return; }
@@ -1425,6 +1428,15 @@ function AuthScreen({ onAuth }) {
             {error && <div style={{ background:"rgba(217,64,64,0.15)", border:"1px solid rgba(217,64,64,0.3)", borderRadius:10, padding:"10px 14px", fontSize:13, color:"#FF8080" }}>{error}</div>}
             <button onClick={handleSubmit} disabled={loading} style={{ width:"100%", padding:14, borderRadius:12, background:B.accent, color:B.dark, fontWeight:700, fontSize:15, border:"none", cursor:loading?"not-allowed":"pointer", opacity:loading?0.7:1, marginTop:4 }}>
               {loading?(mode==="signin"?"Signing in…":"Creating account…"):(mode==="signin"?"Sign In":"Create Account")}
+            </button>
+            <div style={{ display:"flex", alignItems:"center", gap:10, margin:"4px 0" }}>
+              <div style={{ flex:1, height:1, background:"rgba(255,255,255,0.1)" }}/>
+              <span style={{ fontSize:12, color:"rgba(255,255,255,0.3)" }}>or</span>
+              <div style={{ flex:1, height:1, background:"rgba(255,255,255,0.1)" }}/>
+            </div>
+            <button onClick={signInWithGoogle} style={{ width:"100%", padding:14, borderRadius:12, background:"#fff", color:"#1C2B4B", fontWeight:700, fontSize:15, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+              <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
+              Continue with Google
             </button>
           </div>
         </div>
@@ -2060,6 +2072,22 @@ export default function App() {
     if (user?.email===ADMIN_EMAIL) showToast("Welcome to the Admin Panel 🛡️");
     else showToast(`Welcome back, ${user.user_metadata?.full_name?.split(" ")[0]||"there"}! 👋`);
   }, [scheduleRefresh]);
+
+  // Handle Google OAuth redirect — token arrives in URL hash
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash && hash.includes("access_token")) {
+      const params = new URLSearchParams(hash.replace("#", "?"));
+      const access_token = params.get("access_token");
+      const refresh_token = params.get("refresh_token");
+      if (access_token) {
+        sb.getUser(access_token).then(user => {
+          handleAuth({ user, token: access_token, refreshToken: refresh_token });
+          window.history.replaceState(null, null, window.location.pathname);
+        });
+      }
+    }
+  }, [handleAuth]);
 
   const handleSignOut = async () => {
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
