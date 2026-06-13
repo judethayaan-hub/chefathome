@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import DashboardRouter from "./dashboards/DashboardRouter.jsx";
 
 // ─── Evara SVG Logo ───────────────────────────────────────────────────────────
 function EvaraLogo({ size = "md", dark = false }) {
@@ -1684,10 +1685,11 @@ function ProfilePage({ user, token, onSignOut, onShowAuth }) {
 // ─── Desktop Sidebar ──────────────────────────────────────────────────────────
 function DesktopSidebar({ tab, onTab, user, onShowAuth, onSignOut }) {
   const tabs = [
-    { id:"explore",  label:"Explore",  icon:Icon.Home },
-    { id:"bookings", label:"Bookings", icon:Icon.Bookmark },
-    { id:"profile",  label:"Profile",  icon:Icon.User },
-  ];
+    { id:"explore",   label:"Explore",    icon:Icon.Home,     always:true  },
+    { id:"bookings",  label:"Bookings",   icon:Icon.Bookmark, always:true  },
+    { id:"dashboard", label:"Dashboard",  icon:Icon.TrendUp,  always:false },
+    { id:"profile",   label:"Profile",    icon:Icon.User,     always:true  },
+  ].filter(t => t.always || !!user);
   const name = user?.user_metadata?.full_name || user?.email?.split("@")[0] || "";
   const initials = name.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase() || "?";
   return (
@@ -1728,12 +1730,13 @@ function DesktopSidebar({ tab, onTab, user, onShowAuth, onSignOut }) {
 }
 
 // ─── Mobile Bottom Nav ────────────────────────────────────────────────────────
-function BottomNav({ tab, onTab }) {
+function BottomNav({ tab, onTab, user }) {
   const tabs = [
-    { id:"explore",  label:"Explore",  icon:Icon.Home },
-    { id:"bookings", label:"Bookings", icon:Icon.Bookmark },
-    { id:"profile",  label:"Profile",  icon:Icon.User },
-  ];
+    { id:"explore",   label:"Explore",   icon:Icon.Home,     always:true  },
+    { id:"bookings",  label:"Bookings",  icon:Icon.Bookmark, always:true  },
+    { id:"dashboard", label:"Dashboard", icon:Icon.TrendUp,  always:false },
+    { id:"profile",   label:"Profile",   icon:Icon.User,     always:true  },
+  ].filter(t => t.always || !!user);
   return (
     <div className="evara-bottom-nav" style={{ position:"fixed", bottom:0, left:0, right:0, zIndex:500, background:B.surface, borderTop:`1px solid ${B.border}`, display:"flex", padding:"8px 0 env(safe-area-inset-bottom, 8px)" }}>
       {tabs.map(({id,label,icon:Ico})=>(
@@ -2097,8 +2100,42 @@ export default function App() {
     showToast("Signed out successfully","info");
   };
 
-  // Auth is rendered as overlay — no early return, so sidebar stays mounted
-  if (isAdmin) return <AdminPanel user={user} token={token} onSignOut={handleSignOut}/>;
+  // ── Authenticated dashboard routing ────────────────────────────────────────
+  // Any authenticated user with a dashboard tab open → DashboardRouter.
+  // DashboardRouter resolves the correct panel (Admin / Vendor / Customer)
+  // purely from the user's role — no logic needed here.
+  if (user && tab === "dashboard") {
+    return (
+      <>
+        <style>{GLOBAL_STYLE}</style>
+        <DashboardRouter
+          user={user}
+          token={token}
+          sb={sb}
+          vendor={null}          // Pass real vendor record from DB when available
+          onSignOut={handleSignOut}
+          onBackToMarketplace={() => setTab("explore")}
+        />
+      </>
+    );
+  }
+
+  // Legacy admin guard — keeps backward compat with ADMIN_EMAIL check
+  if (isAdmin && tab !== "explore" && tab !== "bookings" && tab !== "profile") {
+    return (
+      <>
+        <style>{GLOBAL_STYLE}</style>
+        <DashboardRouter
+          user={user}
+          token={token}
+          sb={sb}
+          vendor={null}
+          onSignOut={handleSignOut}
+          onBackToMarketplace={() => setTab("explore")}
+        />
+      </>
+    );
+  }
   if (selectedVendor) return (
     <>
       <style>{GLOBAL_STYLE}</style>
@@ -2119,7 +2156,7 @@ export default function App() {
           {tab==="profile" && <ProfilePage user={user} token={token} onSignOut={handleSignOut} onShowAuth={()=>setShowAuth(true)}/>}
         </main>
       </div>
-      <BottomNav tab={tab} onTab={setTab}/>
+      <BottomNav tab={tab} onTab={setTab} user={user}/>
       <Toast toast={toast}/>
       <SupportWidget user={user} token={token}/>
 
