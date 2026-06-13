@@ -1447,12 +1447,107 @@ function AuthScreen({ onAuth }) {
   );
 }
 
+// ─── Category descriptions for tooltips/subtitles ─────────────────────────────
+const CAT_DESC = {
+  all:           "Browse all event services",
+  wedding:       "Halls for your perfect wedding day",
+  party:         "Venues for birthdays & celebrations",
+  chefs:         "Private chefs for any occasion",
+  catering:      "Full catering for your event",
+  djs:           "Music & entertainment for events",
+  photographers: "Capture your special moments",
+  sports:        "Book indoor sports facilities",
+};
+
+const CAT_HINTS = {
+  wedding:       ["Seating up to 500+", "Bridal rooms", "Decoration packages"],
+  party:         ["Birthday & corporate", "Min. 2hr booking", "Decor available"],
+  chefs:         ["Sri Lankan & International", "Tasting sessions", "Any guest count"],
+  catering:      ["Halal • Vegan • Keto", "Per-person pricing", "Live cooking stations"],
+  djs:           ["Baila • EDM • Bollywood", "MC service available", "Full sound systems"],
+  photographers: ["Portfolio to browse", "Drone add-on", "Half-day & full-day"],
+  sports:        ["Badminton • Basketball", "Equipment provided", "Hourly rates"],
+};
+
+const SL_LOCATIONS = ["All Locations","Colombo","Kandy","Galle","Negombo","Matara","Jaffna","Kurunegala","Anuradhapura"];
+
+// ─── How It Works Section ──────────────────────────────────────────────────────
+function HowItWorks() {
+  const steps = [
+    { emoji:"🔍", title:"Browse", desc:"Explore verified vendors by category, location & budget" },
+    { emoji:"📅", title:"Book", desc:"Pick your date, customise your package & confirm instantly" },
+    { emoji:"✅", title:"Enjoy", desc:"Payment held safely until your event is done perfectly" },
+  ];
+  return (
+    <div style={{ padding:"24px 16px 8px" }}>
+      <div style={{ fontFamily:"'Playfair Display',serif", fontSize:18, fontWeight:700, color:B.text, marginBottom:4 }}>How It Works</div>
+      <div style={{ fontSize:12, color:B.textMuted, marginBottom:16 }}>Book any event service in 3 simple steps</div>
+      <div style={{ display:"flex", gap:12 }}>
+        {steps.map((s,i)=>(
+          <div key={i} style={{ flex:1, background:B.surface, borderRadius:16, padding:"16px 12px", border:`1px solid ${B.border}`, textAlign:"center", position:"relative" }}>
+            {i<2 && <div style={{ position:"absolute", top:"50%", right:-8, transform:"translateY(-50%)", fontSize:14, color:B.border, zIndex:1 }}>›</div>}
+            <div style={{ fontSize:28, marginBottom:8 }}>{s.emoji}</div>
+            <div style={{ fontWeight:700, fontSize:13, color:B.text, marginBottom:4 }}>{s.title}</div>
+            <div style={{ fontSize:11, color:B.textMuted, lineHeight:1.4 }}>{s.desc}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Trust Badges ─────────────────────────────────────────────────────────────
+function TrustBadges() {
+  const badges = [
+    { emoji:"🔒", label:"Secure Payment" },
+    { emoji:"✅", label:"Verified Vendors" },
+    { emoji:"⚡", label:"Instant Booking" },
+  ];
+  return (
+    <div style={{ display:"flex", gap:8, padding:"0 16px", justifyContent:"center" }}>
+      {badges.map((b,i)=>(
+        <div key={i} style={{ flex:1, display:"flex", alignItems:"center", gap:6, background:B.surface, borderRadius:10, padding:"8px 10px", border:`1px solid ${B.border}` }}>
+          <span style={{ fontSize:14 }}>{b.emoji}</span>
+          <span style={{ fontSize:11, fontWeight:600, color:B.textMuted }}>{b.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Visual Category Grid ─────────────────────────────────────────────────────
+function CategoryGrid({ category, onSelect, vendorCounts }) {
+  return (
+    <div style={{ padding:"20px 16px 0" }}>
+      <div style={{ fontFamily:"'Playfair Display',serif", fontSize:18, fontWeight:700, color:B.text, marginBottom:4 }}>Browse by Category</div>
+      <div style={{ fontSize:12, color:B.textMuted, marginBottom:14 }}>What are you looking for?</div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10 }}>
+        {CATEGORIES.filter(c=>c.id!=="all").map(cat=>{
+          const active = category===cat.id;
+          return (
+            <button key={cat.id} onClick={()=>onSelect(cat.id)}
+              style={{ background: active ? B.primary : B.surface, border:`2px solid ${active ? B.primary : B.border}`, borderRadius:14, padding:"14px 6px 10px", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:6, transition:"all .15s", boxShadow: active ? `0 4px 16px ${B.primary}33` : "none" }}
+              onMouseEnter={e=>{ if(!active){ e.currentTarget.style.borderColor=B.primary; e.currentTarget.style.transform="translateY(-2px)"; }}}
+              onMouseLeave={e=>{ if(!active){ e.currentTarget.style.borderColor=B.border; e.currentTarget.style.transform=""; }}}>
+              <span style={{ fontSize:26 }}>{cat.emoji}</span>
+              <span style={{ fontSize:11, fontWeight:700, color: active ? "#fff" : B.text, textAlign:"center", lineHeight:1.2 }}>{cat.label}</span>
+              {vendorCounts[cat.id]>0 && <span style={{ fontSize:10, color: active ? "rgba(255,255,255,0.6)" : B.textMuted }}>{vendorCounts[cat.id]} available</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Pages ────────────────────────────────────────────────────────────────────
 function ExplorePage({ user, token, onVendorSelect, onShowAuth }) {
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [category, setCategory] = useState("all");
   const [search, setSearch] = useState("");
+  const [location, setLocation] = useState("All Locations");
+  const [showCategoryGrid, setShowCategoryGrid] = useState(true);
 
   const fetchVendors = useCallback(async () => {
     setLoading(true);
@@ -1465,83 +1560,219 @@ function ExplorePage({ user, token, onVendorSelect, onShowAuth }) {
 
   useEffect(() => { fetchVendors(); }, [fetchVendors]);
 
-  const filtered = vendors.filter(v =>
-    v.name?.toLowerCase().includes(search.toLowerCase()) ||
-    v.location?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = vendors.filter(v => {
+    const matchSearch = v.name?.toLowerCase().includes(search.toLowerCase()) || v.location?.toLowerCase().includes(search.toLowerCase());
+    const matchLocation = location==="All Locations" || v.location?.toLowerCase().includes(location.toLowerCase());
+    return matchSearch && matchLocation;
+  });
+
+  // Count vendors per category for the grid
+  const vendorCounts = {};
+  CATEGORIES.forEach(c => { vendorCounts[c.id] = vendors.filter(v=>v.category===c.id).length; });
+
+  const handleCategorySelect = (id) => {
+    setCategory(id);
+    setShowCategoryGrid(false);
+  };
+
+  const activeCategory = CATEGORIES.find(c=>c.id===category);
 
   return (
     <div style={{ minHeight:"100vh", background:B.bg, paddingBottom:"clamp(16px, 10vw, 90px)" }}>
-      <div className="evara-page-header" style={{ background:B.dark, padding:"52px 20px 24px", position:"relative", overflow:"hidden" }}>
-        <div style={{ position:"absolute", top:-40, right:-40, width:180, height:180, borderRadius:"50%", background:"rgba(212,175,106,0.08)", border:"1px solid rgba(212,175,106,0.12)", pointerEvents:"none" }}/>
-        <div className="evara-page-header-inner" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
+
+      {/* ── Hero Header ── */}
+      <div className="evara-page-header" style={{ background:B.dark, padding:"52px 20px 28px", position:"relative", overflow:"hidden" }}>
+        <div style={{ position:"absolute", top:-40, right:-40, width:200, height:200, borderRadius:"50%", background:"rgba(212,175,106,0.07)", border:"1px solid rgba(212,175,106,0.1)", pointerEvents:"none" }}/>
+        <div style={{ position:"absolute", bottom:-60, left:-30, width:160, height:160, borderRadius:"50%", background:"rgba(212,175,106,0.04)", pointerEvents:"none" }}/>
+
+        <div className="evara-page-header-inner" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16 }}>
           <div>
-            <div style={{ fontSize:12, color:"rgba(255,255,255,0.4)", marginBottom:6 }}>{user?`Welcome back, ${user.user_metadata?.full_name?.split(" ")[0]||"there"}`:"Discover Sri Lanka's finest events"}</div>
             <EvaraLogo size="md" dark/>
+            <div style={{ fontSize:13, color:"rgba(255,255,255,0.5)", marginTop:6 }}>
+              {user ? `Welcome back, ${user.user_metadata?.full_name?.split(" ")[0]||"there"} 👋` : "Sri Lanka's #1 Event Booking Platform"}
+            </div>
           </div>
-          {!user && <button onClick={onShowAuth} className="mobile-signin-btn" style={{ padding:"8px 18px", borderRadius:20, background:B.accent, color:B.dark, fontWeight:700, fontSize:13, border:"none", cursor:"pointer" }}>Sign In</button>}
+          {!user && <button onClick={onShowAuth} className="mobile-signin-btn" style={{ padding:"9px 20px", borderRadius:20, background:B.accent, color:B.dark, fontWeight:700, fontSize:13, border:"none", cursor:"pointer" }}>Sign In</button>}
         </div>
-        <div className="evara-page-header-inner" style={{ maxWidth:"none" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:10, background:"rgba(255,255,255,0.08)", borderRadius:12, padding:"10px 14px", border:"1px solid rgba(255,255,255,0.1)" }}>
-            <span style={{ color:"rgba(255,255,255,0.4)" }}><Icon.Search/></span>
-            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search vendors, locations..." style={{ flex:1, background:"none", border:"none", outline:"none", fontSize:14, color:"#fff" }}/>
-          </div>
-        </div>
-      </div>
-      <div className="evara-page-inner" style={{ display:"flex", gap:8, overflowX:"auto", padding:"16px 16px 0", scrollbarWidth:"none" }}>
-        {CATEGORIES.map(cat=>(
-          <button key={cat.id} onClick={()=>setCategory(cat.id)} style={{ display:"flex", alignItems:"center", gap:6, whiteSpace:"nowrap", padding:"8px 14px", borderRadius:20, fontSize:13, fontWeight:600, cursor:"pointer", background: category===cat.id ? B.primary : B.surface, color: category===cat.id ? "#fff" : B.textMuted, border:`1.5px solid ${category===cat.id ? B.primary : B.border}`, flexShrink:0 }}>
-            <span>{cat.emoji}</span> {cat.label}
-          </button>
-        ))}
-      </div>
-      <div className="evara-page-inner" style={{ padding:"16px 16px" }}>
-        {loading ? (
-          <div className="vendor-grid" style={{ display:"flex", flexDirection:"column", gap:12 }}>
-            {[1,2,3,4,5,6].map(i=>(
-              <div key={i} style={{ background:B.surface, borderRadius:16, border:`1px solid ${B.border}`, padding:16, display:"flex", gap:12 }}>
-                <Skeleton w={72} h={72} r={12}/>
-                <div style={{ flex:1, display:"flex", flexDirection:"column", gap:8 }}><Skeleton h={16} w="60%"/><Skeleton h={12} w="40%"/><Skeleton h={12} w="80%"/></div>
-              </div>
-            ))}
-          </div>
-        ) : filtered.length===0 ? (
-          <div style={{ textAlign:"center", padding:"60px 20px" }}>
-            <div style={{ fontSize:48, marginBottom:12 }}>🔍</div>
-            <div style={{ fontWeight:700, color:B.text, marginBottom:6 }}>No vendors found</div>
-            <div style={{ fontSize:13, color:B.textMuted }}>Try a different category or search term</div>
-          </div>
-        ) : (
-          <div className="vendor-grid" style={{ display:"flex", flexDirection:"column", gap:12 }}>
-            {filtered.map(vendor=><VendorCard key={vendor.id} vendor={vendor} onSelect={onVendorSelect}/>)}
+
+        {/* Tagline for non-logged-in users */}
+        {!user && (
+          <div className="evara-page-header-inner" style={{ marginBottom:16 }}>
+            <div style={{ fontSize:22, fontFamily:"'Playfair Display',serif", color:"#fff", fontWeight:700, lineHeight:1.3, marginBottom:6 }}>
+              Book the best event<br/>services in Sri Lanka
+            </div>
+            <div style={{ fontSize:12, color:"rgba(255,255,255,0.4)" }}>Wedding halls · Catering · DJs · Photography & more</div>
           </div>
         )}
+
+        {/* Search bar */}
+        <div className="evara-page-header-inner" style={{ maxWidth:"none" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, background:"rgba(255,255,255,0.09)", borderRadius:12, padding:"10px 14px", border:"1px solid rgba(255,255,255,0.12)" }}>
+            <span style={{ color:"rgba(255,255,255,0.4)" }}><Icon.Search/></span>
+            <input value={search} onChange={e=>{ setSearch(e.target.value); setShowCategoryGrid(false); }} placeholder="Search vendors, locations..." style={{ flex:1, background:"none", border:"none", outline:"none", fontSize:14, color:"#fff" }}/>
+            {search && <button onClick={()=>{ setSearch(""); setShowCategoryGrid(true); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.4)", cursor:"pointer", fontSize:16 }}>✕</button>}
+          </div>
+        </div>
+
+        {/* Location filter */}
+        <div className="evara-page-header-inner" style={{ maxWidth:"none", marginTop:10, display:"flex", gap:8, overflowX:"auto", scrollbarWidth:"none" }}>
+          <span style={{ fontSize:11, color:"rgba(255,255,255,0.3)", alignSelf:"center", flexShrink:0 }}>📍</span>
+          {SL_LOCATIONS.map(loc=>(
+            <button key={loc} onClick={()=>setLocation(loc)} style={{ whiteSpace:"nowrap", padding:"5px 12px", borderRadius:16, fontSize:12, fontWeight:600, cursor:"pointer", flexShrink:0, border:`1px solid ${location===loc ? B.accent : "rgba(255,255,255,0.12)"}`, background: location===loc ? `${B.accent}22` : "transparent", color: location===loc ? B.accent : "rgba(255,255,255,0.45)" }}>
+              {loc}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {/* ── Trust Badges ── */}
+      <div style={{ padding:"16px 0 0" }}>
+        <TrustBadges/>
+      </div>
+
+      {/* ── How It Works (shown only on first load / all category) ── */}
+      {showCategoryGrid && category==="all" && !search && (
+        <HowItWorks/>
+      )}
+
+      {/* ── Category Grid or Chips ── */}
+      {showCategoryGrid && category==="all" && !search ? (
+        <CategoryGrid category={category} onSelect={handleCategorySelect} vendorCounts={vendorCounts}/>
+      ) : (
+        <div>
+          {/* Active category header + back */}
+          {category!=="all" && (
+            <div style={{ padding:"16px 16px 0", display:"flex", alignItems:"center", gap:10 }}>
+              <button onClick={()=>{ setCategory("all"); setShowCategoryGrid(true); }} style={{ background:B.surface, border:`1px solid ${B.border}`, borderRadius:10, padding:"6px 12px", fontSize:12, fontWeight:600, color:B.textMuted, cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>
+                ← All
+              </button>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:20 }}>{activeCategory?.emoji}</span>
+                <div>
+                  <div style={{ fontWeight:700, fontSize:15, color:B.text }}>{activeCategory?.label}</div>
+                  <div style={{ fontSize:11, color:B.textMuted }}>{CAT_DESC[category]}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Category hints */}
+          {category!=="all" && CAT_HINTS[category] && (
+            <div style={{ display:"flex", gap:6, padding:"10px 16px 0", overflowX:"auto", scrollbarWidth:"none" }}>
+              {CAT_HINTS[category].map((hint,i)=>(
+                <div key={i} style={{ whiteSpace:"nowrap", background:B.surface, border:`1px solid ${B.border}`, borderRadius:20, padding:"4px 12px", fontSize:11, color:B.textMuted, fontWeight:500 }}>
+                  ✓ {hint}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Horizontal category scroll when browsing */}
+          <div style={{ display:"flex", gap:8, overflowX:"auto", padding:"12px 16px 0", scrollbarWidth:"none" }}>
+            {CATEGORIES.map(cat=>(
+              <button key={cat.id} onClick={()=>{ setCategory(cat.id); if(cat.id==="all") setShowCategoryGrid(true); }} style={{ display:"flex", alignItems:"center", gap:6, whiteSpace:"nowrap", padding:"7px 14px", borderRadius:20, fontSize:13, fontWeight:600, cursor:"pointer", background: category===cat.id ? B.primary : B.surface, color: category===cat.id ? "#fff" : B.textMuted, border:`1.5px solid ${category===cat.id ? B.primary : B.border}`, flexShrink:0 }}>
+                <span>{cat.emoji}</span> {cat.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Vendor Results ── */}
+      {(!showCategoryGrid || category!=="all" || search) && (
+        <div className="evara-page-inner" style={{ padding:"16px 16px" }}>
+          {/* Results count */}
+          {!loading && filtered.length>0 && (
+            <div style={{ fontSize:12, color:B.textMuted, marginBottom:12, fontWeight:500 }}>
+              {filtered.length} vendor{filtered.length!==1?"s":""} found{location!=="All Locations"?` in ${location}`:""}
+            </div>
+          )}
+          {loading ? (
+            <div className="vendor-grid" style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              {[1,2,3,4,5,6].map(i=>(
+                <div key={i} style={{ background:B.surface, borderRadius:16, border:`1px solid ${B.border}`, padding:16, display:"flex", gap:12 }}>
+                  <Skeleton w={72} h={72} r={12}/>
+                  <div style={{ flex:1, display:"flex", flexDirection:"column", gap:8 }}><Skeleton h={16} w="60%"/><Skeleton h={12} w="40%"/><Skeleton h={12} w="80%"/></div>
+                </div>
+              ))}
+            </div>
+          ) : filtered.length===0 ? (
+            <div style={{ textAlign:"center", padding:"60px 20px" }}>
+              <div style={{ fontSize:48, marginBottom:12 }}>🔍</div>
+              <div style={{ fontWeight:700, color:B.text, marginBottom:6 }}>No vendors found</div>
+              <div style={{ fontSize:13, color:B.textMuted, marginBottom:16 }}>Try a different category, location or search term</div>
+              <button onClick={()=>{ setCategory("all"); setSearch(""); setLocation("All Locations"); setShowCategoryGrid(true); }} style={{ padding:"10px 24px", borderRadius:12, background:B.primary, color:"#fff", fontWeight:700, fontSize:13, border:"none", cursor:"pointer" }}>
+                Browse All Categories
+              </button>
+            </div>
+          ) : (
+            <div className="vendor-grid" style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              {filtered.map(vendor=><VendorCard key={vendor.id} vendor={vendor} onSelect={onVendorSelect} onShowAuth={onShowAuth} user={user}/>)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Bottom CTA for non-logged users ── */}
+      {!user && showCategoryGrid && (
+        <div style={{ margin:"24px 16px", background:B.dark, borderRadius:20, padding:"24px 20px", textAlign:"center", position:"relative", overflow:"hidden" }}>
+          <div style={{ position:"absolute", top:-30, right:-30, width:120, height:120, borderRadius:"50%", background:"rgba(212,175,106,0.08)" }}/>
+          <div style={{ fontSize:28, marginBottom:10 }}>🎉</div>
+          <div style={{ fontFamily:"'Playfair Display',serif", fontSize:18, fontWeight:700, color:"#fff", marginBottom:6 }}>Ready to plan your event?</div>
+          <div style={{ fontSize:13, color:"rgba(255,255,255,0.5)", marginBottom:16 }}>Sign in to book vendors, track your events & manage payments securely</div>
+          <button onClick={onShowAuth} style={{ padding:"12px 32px", borderRadius:12, background:B.accent, color:B.dark, fontWeight:700, fontSize:15, border:"none", cursor:"pointer" }}>
+            Get Started — It's Free
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-function VendorCard({ vendor, onSelect }) {
+function VendorCard({ vendor, onSelect, onShowAuth, user }) {
   return (
-    <div onClick={()=>onSelect(vendor)} style={{ background:B.surface, borderRadius:16, border:`1px solid ${B.border}`, padding:16, display:"flex", gap:14, cursor:"pointer", transition:"transform .15s, box-shadow .15s" }}
+    <div onClick={()=>onSelect(vendor)}
+      style={{ background:B.surface, borderRadius:16, border:`1px solid ${B.border}`, padding:16, display:"flex", gap:14, cursor:"pointer", transition:"transform .15s, box-shadow .15s" }}
       onMouseEnter={e=>{ e.currentTarget.style.transform="translateY(-2px)"; e.currentTarget.style.boxShadow="0 8px 24px rgba(0,0,0,0.08)"; }}
       onMouseLeave={e=>{ e.currentTarget.style.transform=""; e.currentTarget.style.boxShadow=""; }}>
-      <div style={{ width:72, height:72, borderRadius:14, background:`linear-gradient(135deg, ${B.dark}22, ${B.primary}33)`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:30, flexShrink:0, border:`1px solid ${B.border}` }}>{CAT_EMOJI[vendor.category]||"🎪"}</div>
+
+      {/* Emoji icon */}
+      <div style={{ width:72, height:72, borderRadius:14, background:`linear-gradient(135deg, ${B.dark}22, ${B.primary}33)`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:30, flexShrink:0, border:`1px solid ${B.border}` }}>
+        {CAT_EMOJI[vendor.category]||"🎪"}
+      </div>
+
       <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:4 }}>
-          <div style={{ fontWeight:700, fontSize:15, color:B.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"70%" }}>{vendor.name}</div>
-          <div style={{ display:"flex", alignItems:"center", gap:3, flexShrink:0 }}><Icon.Star filled/><span style={{ fontSize:12, fontWeight:600, color:B.textMuted }}>{vendor.rating||"4.8"}</span></div>
+        {/* Name + Rating */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:3 }}>
+          <div style={{ fontWeight:700, fontSize:15, color:B.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"68%" }}>{vendor.name}</div>
+          <div style={{ display:"flex", alignItems:"center", gap:3, flexShrink:0, background:"#FBF5E9", borderRadius:8, padding:"2px 7px" }}>
+            <Icon.Star filled/>
+            <span style={{ fontSize:12, fontWeight:700, color:B.accent }}>{vendor.rating||"4.8"}</span>
+          </div>
         </div>
+
+        {/* Location */}
         <div style={{ display:"flex", alignItems:"center", gap:4, marginBottom:6 }}>
           <span style={{ color:B.textMuted }}><Icon.MapPin/></span>
-          <span style={{ fontSize:12, color:B.textMuted, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{vendor.location||"Sri Lanka"}</span>
+          <span style={{ fontSize:12, color:B.textMuted }}>{vendor.location||"Sri Lanka"}</span>
+          {vendor.response_time && <span style={{ fontSize:11, color:B.success||"#1A9B6C", marginLeft:4, fontWeight:500 }}>· ⚡ {vendor.response_time} response</span>}
         </div>
+
+        {/* Category badge + Price */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <div style={{ display:"inline-flex", alignItems:"center", gap:4, background:B.bg, borderRadius:20, padding:"3px 10px", border:`1px solid ${B.border}` }}>
             <span style={{ fontSize:11 }}>{CAT_EMOJI[vendor.category]}</span>
             <span style={{ fontSize:11, color:B.textMuted, fontWeight:500 }}>{CAT_LABELS[vendor.category]||vendor.category}</span>
           </div>
-          {vendor.base_price && <span style={{ fontSize:13, fontWeight:700, color:B.primary }}>from LKR {vendor.base_price.toLocaleString()}</span>}
+          {vendor.base_price
+            ? <span style={{ fontSize:13, fontWeight:700, color:B.primary }}>from LKR {vendor.base_price.toLocaleString()}</span>
+            : <span style={{ fontSize:12, color:B.textMuted, fontStyle:"italic" }}>Contact for price</span>
+          }
+        </div>
+
+        {/* View details hint */}
+        <div style={{ marginTop:8, fontSize:11, color:B.accent, fontWeight:600 }}>
+          View details & book →
         </div>
       </div>
     </div>
