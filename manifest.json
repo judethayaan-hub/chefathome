@@ -1,0 +1,16 @@
+{
+  "name": "Evara - Event Booking",
+  "short_name": "Evara",
+  "description": "Discover and book Sri Lanka's finest event vendors",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0C1628",
+  "theme_color": "#1C2B4B",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "categories": ["lifestyle", "travel"],
+  "lang": "en-LK"
+}
