@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { B, SectionHeader, cardStyle, Icon, formatDate } from "../../shared/tokens.js";
+import { B, SectionHeader, cardStyle, Icon, formatDate } from "../../shared/tokens.jsx";
 
 const REVIEWS = [
   { id:1, customer:"Priya S.",   rating:5, date:"2026-12-10", text:"Absolutely stunning venue! The staff was incredibly attentive and everything was perfect.", event:"Wedding Reception", replied:false },

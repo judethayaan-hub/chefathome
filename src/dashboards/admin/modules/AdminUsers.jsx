@@ -7,7 +7,7 @@ import { useState, useMemo } from "react";
 import {
   B, StatusBadge, SectionHeader, EmptyState, ConfirmDialog,
   StatCard, MiniBarChart, Icon, formatDate, formatMoney, shortId, cardStyle, inputStyle, labelStyle,
-} from "../../shared/tokens.js";
+} from "../../shared/tokens.jsx";
 
 // ─── Shared search bar ─────────────────────────────────────────────────────────
 function SearchBar({ value, onChange, placeholder = "Search..." }) {

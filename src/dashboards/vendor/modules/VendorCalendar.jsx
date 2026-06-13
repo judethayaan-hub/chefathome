@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { B, StatusBadge, SectionHeader, Icon, formatMoney, cardStyle } from "../../shared/tokens.js";
+import { B, StatusBadge, SectionHeader, Icon, formatMoney, cardStyle } from "../../shared/tokens.jsx";
 
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAYS_SHORT = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];

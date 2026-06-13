@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { B, SectionHeader, EmptyState, StatusBadge, cardStyle, Icon, formatDate, formatMoney } from "../../shared/tokens.js";
+import { B, SectionHeader, EmptyState, StatusBadge, cardStyle, Icon, formatDate, formatMoney } from "../../shared/tokens.jsx";
 
 const CUSTOMERS = [
   { id:1, name:"Priya Subramaniam",  email:"priya@example.com",  phone:"+94 77 123 4567", totalSpend:305000, bookings:4, lastBooking:"2026-12-24", preferred:"Wedding Hall",  status:"vip",    notes:"Prefers weekend events, vegetarian menu" },

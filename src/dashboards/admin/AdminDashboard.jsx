@@ -9,7 +9,7 @@
 
 import { useState, useCallback } from "react";
 import { ROLES, hasPermission, PERMISSIONS as P } from "../../rbac/roles.js";
-import { B, Icon, Toast, CAT_LABELS, CAT_EMOJI } from "../shared/tokens.js";
+import { B, Icon, Toast, CAT_LABELS, CAT_EMOJI } from "../shared/tokens.jsx";
 
 import AdminOverview        from "./modules/AdminOverview.jsx";
 import AdminUsers           from "./modules/AdminUsers.jsx";

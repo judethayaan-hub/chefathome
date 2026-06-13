@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { B, SectionHeader, StatCard, MiniBarChart, cardStyle, Icon, formatMoney } from "../../shared/tokens.js";
+import { B, SectionHeader, StatCard, MiniBarChart, cardStyle, Icon, formatMoney } from "../../shared/tokens.jsx";
 
 const REVENUE_DATA = [
   {label:"Jul",value:185000},{label:"Aug",value:240000},{label:"Sep",value:195000},

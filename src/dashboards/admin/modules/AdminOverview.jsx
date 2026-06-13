@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   B, StatCard, MiniBarChart, StatusBadge, SectionHeader,
   Icon, formatDate, formatMoney, shortId, cardStyle,
-} from "../../shared/tokens.js";
+} from "../../shared/tokens.jsx";
 
 const REVENUE_TREND = [
   {label:"Jul",value:2850000},{label:"Aug",value:3420000},{label:"Sep",value:2980000},

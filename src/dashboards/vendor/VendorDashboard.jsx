@@ -14,7 +14,7 @@ import { useState, useCallback, useEffect } from "react";
 import { getModulesForCategory } from "./moduleRegistry.js";
 import {
   B, CAT_LABELS, CAT_EMOJI, Icon, Toast, formatDate, formatMoney, shortId,
-} from "../shared/tokens.js";
+} from "../shared/tokens.jsx";
 
 // ─── Lazy module component map ────────────────────────────────────────────────
 // Imported statically for Vite compatibility (no dynamic import() needed at scale)

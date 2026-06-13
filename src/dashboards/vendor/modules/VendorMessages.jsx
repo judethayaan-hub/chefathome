@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { B, SectionHeader, cardStyle, Icon, formatDate } from "../../shared/tokens.js";
+import { B, SectionHeader, cardStyle, Icon, formatDate } from "../../shared/tokens.jsx";
 
 const CONVERSATIONS = [
   { id:1, customer:"Priya S.",  avatar:"PS", time:"2m ago",   last:"Thanks! Can you confirm the menu?",           unread:2, active:true  },

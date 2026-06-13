@@ -2,7 +2,7 @@
  * VendorAvailability.jsx - Universal availability manager with status blocks
  */
 import { useState } from "react";
-import { B, SectionHeader, cardStyle, Icon } from "../../shared/tokens.js";
+import { B, SectionHeader, cardStyle, Icon } from "../../shared/tokens.jsx";
 
 const SLOTS = ["6AM","7AM","8AM","9AM","10AM","11AM","12PM","1PM","2PM","3PM","4PM","5PM","6PM","7PM","8PM","9PM","10PM"];
 const DAYS_SHORT = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];

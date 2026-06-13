@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { B, SectionHeader, StatusBadge, cardStyle, Icon, formatDate, formatMoney } from "../../shared/tokens.js";
+import { B, SectionHeader, StatusBadge, cardStyle, Icon, formatDate, formatMoney } from "../../shared/tokens.jsx";
 
 const TRANSACTIONS = [
   { id:"TXN-001", type:"booking",    desc:"Wedding Reception – Priya S.",    amount:+80750, status:"completed", date:"2026-12-10" },

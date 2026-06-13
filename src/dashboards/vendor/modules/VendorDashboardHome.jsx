@@ -9,7 +9,7 @@ import { useState } from "react";
 import {
   B, StatCard, MiniBarChart, StatusBadge, SectionHeader,
   Icon, formatDate, formatMoney, shortId, cardStyle,
-} from "../../shared/tokens.js";
+} from "../../shared/tokens.jsx";
 
 // ── Mock data helpers ─────────────────────────────────────────────────────────
 const RECENT_BOOKINGS = [

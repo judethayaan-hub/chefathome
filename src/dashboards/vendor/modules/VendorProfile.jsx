@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { B, SectionHeader, cardStyle, inputStyle, labelStyle, Icon, CAT_LABELS, CAT_EMOJI } from "../../shared/tokens.js";
+import { B, SectionHeader, cardStyle, inputStyle, labelStyle, Icon, CAT_LABELS, CAT_EMOJI } from "../../shared/tokens.jsx";
 
 // ─── VendorProfile ─────────────────────────────────────────────────────────────
 export function VendorProfile({ vendor, showToast }) {

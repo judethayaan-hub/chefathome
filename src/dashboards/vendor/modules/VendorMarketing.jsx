@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { B, SectionHeader, cardStyle, Icon, formatDate } from "../../shared/tokens.js";
+import { B, SectionHeader, cardStyle, Icon, formatDate } from "../../shared/tokens.jsx";
 
 const PROMOS = [
   { id:1, code:"NEWYEAR25",   discount:25, type:"percent", minOrder:50000, uses:12, limit:50,  active:true,  expires:"2027-01-01", desc:"New Year 25% off" },

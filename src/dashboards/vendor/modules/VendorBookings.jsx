@@ -10,7 +10,7 @@ import { useState, useMemo } from "react";
 import {
   B, StatusBadge, SectionHeader, EmptyState, ConfirmDialog,
   Icon, formatDate, formatMoney, shortId, cardStyle, inputStyle,
-} from "../../shared/tokens.js";
+} from "../../shared/tokens.jsx";
 
 const ALL_STATUSES = ["all","pending","confirmed","in_progress","completed","cancelled","refunded"];
 
